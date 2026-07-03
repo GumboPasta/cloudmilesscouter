@@ -1,0 +1,10 @@
+# Build artifacts
+/bin/
+cloudmilesscouter
+
+# OS
+.DS_Store
+
+# Go
+*.test
+*.out
