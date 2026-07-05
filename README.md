@@ -43,28 +43,28 @@ This project is phased intentionally. **Phases 1 and 2 have zero queue infrastru
 **✅ Definition of Done:** Running one command scrapes United Airlines for a given route and date, and I can see the raw JSON stored correctly in MongoDB.
 
 **Step 1 — Project Setup**
-- [ ] Initialize Go project (`go mod init cloudmilesscouter`)
-- [ ] Set up folder structure (see below)
-- [ ] Install dependencies: `playwright-go`, MongoDB driver, Chi router
-- [ ] Set up Docker Compose with MongoDB only (nothing else yet)
-- [ ] Verify MongoDB boots and is reachable from Go
+- [x] Initialize Go project (`go mod init cloudmilesscouter`)
+- [x] Set up folder structure (see below)
+- [x] Install dependencies: `playwright-go`, MongoDB driver, Chi router
+- [x] Set up Docker Compose with MongoDB only (nothing else yet)
+- [x] Verify MongoDB boots and is reachable from Go
 
 **Step 2 — Pick First Airline**
-- [ ] Start with United Airlines
-- [ ] Manually browse their award search to understand the flow
-- [ ] Note what inputs are required (origin, destination, dates, cabin)
+- [x] Start with United Airlines
+- [x] Manually browse their award search to understand the flow
+- [x] Note what inputs are required (origin, destination, dates, cabin)
 
 **Step 3 — Reverse Engineer the Airline Site**
-- [ ] Open United award search in Chrome DevTools → Network tab
-- [ ] Perform a manual award search and watch XHR/Fetch requests
-- [ ] If internal API found → call it directly (faster, more reliable than browser automation)
-- [ ] If no API found → fall back to Playwright browser automation
+- [x] Open United award search in Chrome DevTools → Network tab
+- [x] Perform a manual award search and watch XHR/Fetch requests
+- [x] Internal API found (`FetchFlights`) — but United runs Akamai Bot Manager, so calling it directly via `net/http` isn't viable; drove it through a real Playwright browser instead and captured the response.
+- [ ] ~~If no API found → fall back to Playwright browser automation~~ (n/a — API was found, Playwright used for bot-detection reasons instead)
 
 **Step 4 — Build the Scraper**
-- [ ] Write Go + Playwright code to automate the search
-- [ ] Handle dynamic page load wait times
-- [ ] Grab raw HTML or JSON response
-- [ ] Add structured logging for success/failure
+- [x] Write Go + Playwright code to automate the search
+- [x] Handle dynamic page load wait times
+- [x] Grab raw HTML or JSON response
+- [x] Add structured logging for success/failure
 
 **Step 5 — Store Raw Data in MongoDB**
 - [ ] Connect Go scraper to local MongoDB instance

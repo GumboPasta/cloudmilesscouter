@@ -2,9 +2,15 @@ module cloudmilesscouter
 
 go 1.26.4
 
-require go.mongodb.org/mongo-driver/v2 v2.7.0
+require (
+	github.com/playwright-community/playwright-go v0.6000.0
+	go.mongodb.org/mongo-driver/v2 v2.7.0
+)
 
 require (
+	github.com/deckarep/golang-set/v2 v2.8.0 // indirect
+	github.com/go-jose/go-jose/v3 v3.0.5 // indirect
+	github.com/go-stack/stack v1.8.1 // indirect
 	github.com/klauspost/compress v1.17.6 // indirect
 	github.com/xdg-go/pbkdf2 v1.0.0 // indirect
 	github.com/xdg-go/scram v1.2.0 // indirect
