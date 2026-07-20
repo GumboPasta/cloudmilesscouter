@@ -67,15 +67,15 @@ This project is phased intentionally. **Phases 1 and 2 have zero queue infrastru
 - [x] Add structured logging for success/failure
 
 **Step 5 — Store Raw Data in MongoDB**
-- [ ] Connect Go scraper to local MongoDB instance
-- [ ] Store raw response as-is (no cleaning yet)
-- [ ] Include metadata: airline name, route, date scraped, raw payload
+- [x] Connect Go scraper to local MongoDB instance
+- [x] Store raw response as-is (no cleaning yet)
+- [x] Include metadata: airline name, route, date scraped, raw payload
 
 **Step 6 — Test & Validate**
-- [ ] Run scraper manually end to end
-- [ ] Verify data appears correctly in MongoDB
-- [ ] Handle basic errors: timeout, blocked, no results
-- [ ] Save a sample raw JSON document — you'll need it for Phase 2
+- [x] Run scraper manually end to end
+- [x] Verify data appears correctly in MongoDB
+- [x] Handle basic errors: timeout, blocked, no results
+- [x] Save a sample raw JSON document — you'll need it for Phase 2
 
 ---
 

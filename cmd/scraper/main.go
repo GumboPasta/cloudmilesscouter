@@ -64,5 +64,24 @@ func main() {
 		os.Exit(1)
 	}
 
-	fmt.Println(string(body))
+	doc := storage.RawScrape{
+		Airline:     "united",
+		Origin:      *origin,
+		Destination: *destination,
+		SearchDate:  departDate,
+		ScrapedAt:   time.Now(),
+		RawPayload:  string(body),
+	}
+	if err := storage.StoreRawScrape(context.Background(), client, doc); err != nil {
+		slog.Error("store failed", "err", err)
+		os.Exit(1)
+	}
+
+	if hasResults, err := airlines.HasResults(body); err != nil {
+		slog.Warn("could not determine result count", "err", err)
+	} else if !hasResults {
+		slog.Warn("no flights found", "airline", doc.Airline, "origin", doc.Origin, "destination", doc.Destination)
+	}
+
+	slog.Info("scrape stored", "airline", doc.Airline, "origin", doc.Origin, "destination", doc.Destination, "bytes", len(body))
 }

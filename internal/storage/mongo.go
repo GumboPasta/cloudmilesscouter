@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"time"
 
 	"go.mongodb.org/mongo-driver/v2/mongo"
 	"go.mongodb.org/mongo-driver/v2/mongo/options"
@@ -18,4 +19,22 @@ func Connect(ctx context.Context, uri string) (*mongo.Client, error) {
 		return nil, err
 	}
 	return client, nil
+}
+
+// RawScrape is one scrape result stored exactly as the airline returned it,
+// alongside the metadata needed to find it again before Phase 2 normalizes it.
+type RawScrape struct {
+	Airline     string    `bson:"airline"`
+	Origin      string    `bson:"origin"`
+	Destination string    `bson:"destination"`
+	SearchDate  time.Time `bson:"search_date"`
+	ScrapedAt   time.Time `bson:"scraped_at"`
+	RawPayload  string    `bson:"raw_payload"`
+}
+
+// StoreRawScrape inserts doc into data.flight_scrapes as-is, no parsing.
+func StoreRawScrape(ctx context.Context, client *mongo.Client, doc RawScrape) error {
+	collection := client.Database("data").Collection("flight_scrapes")
+	_, err := collection.InsertOne(ctx, doc)
+	return err
 }

@@ -2,6 +2,7 @@ package airlines
 
 import (
 	"bufio"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -177,4 +178,28 @@ func Scrape(profileDir string, headless bool, params scraper.SearchParams, passw
 
 	slog.Info("scrape succeeded", "airline", "united", "bytes", len(body), "duration_ms", time.Since(start).Milliseconds())
 	return body, nil
+}
+
+// HasResults reports whether a FetchFlights response body contains any
+// flights. United returns HTTP 200 with an empty Trips[].Flights array (plus
+// an Errors entry like "No flights found") when a route/date has no award
+// availability — that's valid data, not a scrape failure, so callers should
+// log it rather than treat it as an error.
+func HasResults(body []byte) (bool, error) {
+	var resp struct {
+		Data struct {
+			Trips []struct {
+				Flights []json.RawMessage `json:"Flights"`
+			} `json:"Trips"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return false, err
+	}
+	for _, trip := range resp.Data.Trips {
+		if len(trip.Flights) > 0 {
+			return true, nil
+		}
+	}
+	return false, nil
 }
