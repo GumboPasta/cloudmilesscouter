@@ -4,6 +4,7 @@ cloudmilesscouter
 
 # Secrets
 .env
+docker/pgadmin/pgpass
 
 # OS
 .DS_Store

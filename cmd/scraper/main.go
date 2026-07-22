@@ -37,6 +37,14 @@ func main() {
 
 	log.Println("MongoDB is reachable at", cfg.MongoURI)
 
+	pg, err := storage.ConnectPostgres(ctx, cfg.PostgresURI)
+	if err != nil {
+		log.Fatalf("postgres connection failed: %v", err)
+	}
+	defer pg.Close()
+
+	log.Println("PostgreSQL is reachable at", cfg.PostgresURI)
+
 	fs := flag.NewFlagSet("scrape", flag.ExitOnError)
 	origin := fs.String("origin", "", `United display-string origin, e.g. "DALLAS, TX, US (ALL AIRPORTS)"`)
 	destination := fs.String("destination", "", "United display-string destination")
