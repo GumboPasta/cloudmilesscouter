@@ -7,6 +7,7 @@ import (
 
 type Config struct {
 	MongoURI         string
+	PostgresURI      string
 	UnitedProfileDir string
 	UnitedPassword   string
 	Headless         bool
@@ -17,6 +18,7 @@ func Load() Config {
 
 	return Config{
 		MongoURI:         getEnv("MONGO_URI", "mongodb://localhost:27017"),
+		PostgresURI:      getEnv("POSTGRES_URI", "postgres://cloudmilesscouter:cloudmilesscouter@localhost:5432/cloudmilesscouter?sslmode=disable"),
 		UnitedProfileDir: getEnv("UNITED_PROFILE_DIR", ".united-profile"),
 		UnitedPassword:   getEnv("UNITED_PASSWORD", ""),
 		Headless:         getEnv("HEADLESS", "false") == "true",

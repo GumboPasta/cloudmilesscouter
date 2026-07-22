@@ -101,10 +101,10 @@ This project is phased intentionally. **Phases 1 and 2 have zero queue infrastru
 - [ ] Design the parser interface so adding new airlines later is just adding a new file
 
 **Step 4 — Test & Validate**
-- [ ] Run full pipeline: scrape → MongoDB → ETL → PostgreSQL
-- [ ] Query PostgreSQL directly and verify clean data
-- [ ] Confirm schema handles data from United cleanly
-- [ ] Document the normalized schema — Phase 4 API depends on it
+- [x] Run full pipeline: scrape → MongoDB → ETL → PostgreSQL
+- [x] Query PostgreSQL directly and verify clean data
+- [x] Confirm schema handles data from United cleanly
+- [x] Document the normalized schema — Phase 4 API depends on it (see `docs/schema.md`)
 
 ---
 

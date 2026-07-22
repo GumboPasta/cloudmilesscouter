@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"go.mongodb.org/mongo-driver/v2/bson"
 	"go.mongodb.org/mongo-driver/v2/mongo"
 	"go.mongodb.org/mongo-driver/v2/mongo/options"
 )
@@ -37,4 +38,20 @@ func StoreRawScrape(ctx context.Context, client *mongo.Client, doc RawScrape) er
 	collection := client.Database("data").Collection("flight_scrapes")
 	_, err := collection.InsertOne(ctx, doc)
 	return err
+}
+
+// FindRawScrapes returns every raw scrape stored in data.flight_scrapes.
+func FindRawScrapes(ctx context.Context, client *mongo.Client) ([]RawScrape, error) {
+	collection := client.Database("data").Collection("flight_scrapes")
+	cursor, err := collection.Find(ctx, bson.D{})
+	if err != nil {
+		return nil, err
+	}
+	defer cursor.Close(ctx)
+
+	var docs []RawScrape
+	if err := cursor.All(ctx, &docs); err != nil {
+		return nil, err
+	}
+	return docs, nil
 }

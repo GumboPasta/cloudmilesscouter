@@ -1,0 +1,16 @@
+{
+    "Servers": {
+        "1": {
+            "Name": "CloudMilesScouter Postgres",
+            "Group": "Servers",
+            "Host": "postgres",
+            "Port": 5432,
+            "MaintenanceDB": "cloudmilesscouter",
+            "Username": "cloudmilesscouter",
+            "ConnectionParameters": {
+                "sslmode": "prefer",
+                "passfile": "/pgpass"
+            }
+        }
+    }
+}
