@@ -85,20 +85,20 @@ This project is phased intentionally. **Phases 1 and 2 have zero queue infrastru
 **✅ Definition of Done:** Running the ETL service reads raw United data from MongoDB and writes clean, queryable rows into PostgreSQL with a consistent schema.
 
 **Step 1 — Set Up PostgreSQL**
-- [ ] Add PostgreSQL to Docker Compose
-- [ ] Design normalized schema: `airlines`, `routes`, `awards`, `cabins`
-- [ ] Verify connection from Go
+- [x] Add PostgreSQL to Docker Compose
+- [x] Design normalized schema: `airlines`, `routes`, `awards`, `cabins`
+- [x] Verify connection from Go
 
 **Step 2 — Build Go ETL Service**
-- [ ] Write a Go service that reads raw documents from MongoDB
-- [ ] Parse out the key fields: airline, origin, destination, date, cabin, points cost
-- [ ] Handle missing or malformed fields gracefully
-- [ ] Write clean rows into PostgreSQL
+- [x] Write a Go service that reads raw documents from MongoDB
+- [x] Parse out the key fields: airline, origin, destination, date, cabin, points cost
+- [x] Handle missing or malformed fields gracefully
+- [x] Write clean rows into PostgreSQL
 
 **Step 3 — Handle Schema Differences Per Airline**
-- [ ] Each airline's raw data will look different — write a parser per airline
-- [ ] United parser → normalized struct → Postgres insert
-- [ ] Design the parser interface so adding new airlines later is just adding a new file
+- [x] Each airline's raw data will look different — write a parser per airline
+- [x] United parser → normalized struct → Postgres insert
+- [x] Design the parser interface so adding new airlines later is just adding a new file
 
 **Step 4 — Test & Validate**
 - [x] Run full pipeline: scrape → MongoDB → ETL → PostgreSQL
