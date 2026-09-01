@@ -64,3 +64,11 @@ Indexed on `(route_id, search_date)` for the Phase 4 search query pattern.
 - Products with zero `Prices` are unavailable placeholders and are skipped, as are United's `-NOT-MIXED` duplicate products (deduped on flight number + cabin + award type + points cost).
 - `CabinType: "First"` with a "Polaris" description is international business, not domestic first, and is mapped to `business`.
 - Domestic-only searches may legitimately have no `business`/`premium_economy` rows if United didn't offer those cabins on that route — this is not a parser bug (verified against raw payload during Phase 2 Step 4 testing).
+
+### American (`internal/etl/parsers/american.go`)
+- Raw payload is the `<script id="ng-state">` JSON from aa.com's server-rendered results page; the parser reads `SearchData.itineraryResult`.
+- One row per `slice` (itinerary) × available cabin. Each slice carries a `pricingDetail` array with one entry per cabin (`COACH`/`BUSINESS`/`FIRST`, plus `PREMIUM_ECONOMY` on international); entries with `productAvailable == false` are sold-out placeholders (points `0`) and are skipped.
+- `flight_number` is the **first segment's** marketing flight (e.g. `AA855`); `stops` is `len(segments) - 1`; `flight_origin`/`flight_destination` are the slice endpoints. Many distinct slices share a first flight but connect through different cities, so dedup is on the full segment path + departure time, not the flight number.
+- `depart_time`/`arrive_time`: American's timestamps are ISO-8601 with a UTC offset (`2026-11-20T08:25:00.000-06:00`); the parser keeps the local wall-clock components and drops the offset, matching United's already-tz-less values.
+- `award_type`: `Dynamic` when `pricingDetail[].dynamicFare` is true (American's dynamically-priced awards — most of them today), else `Standard` (the older fixed-chart / saver level, still present on some flights). American exposes no separate "Web Special" marker in the captured payload.
+- Scraper (`internal/scraper/airlines/american.go`): no login needed, but Akamai hard-blocks headless Chromium, so it must run headed (`HEADLESS=false`). The form's URL params don't pre-fill a cold session, so it drives the fields directly (trip type → one way, IATA airports, date, "Redeem miles"), tolerating values the persistent profile remembers from the previous search.

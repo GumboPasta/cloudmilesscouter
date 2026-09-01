@@ -114,23 +114,23 @@ This project is phased intentionally. **Phases 1 and 2 have zero queue infrastru
 **✅ Definition of Done:** Triggering one search dispatches 3+ airline jobs into Kafka, workers scrape them in parallel, and all results land in MongoDB.
 
 **Step 1 — Set Up Kafka**
-- [ ] Add Kafka + Zookeeper to Docker Compose
-- [ ] Create topic: `scrape.jobs`
-- [ ] Verify Kafka boots and accepts messages
+- [x] Add Kafka + Zookeeper to Docker Compose
+- [x] Create topic: `scrape.jobs` (created on boot by a one-shot `kafka-init` service; 3 partitions, replication-factor 1)
+- [x] Verify Kafka boots and accepts messages
 
 **Step 2 — Build Job Producer**
-- [ ] Write Go code to dispatch one job per airline into Kafka topic
-- [ ] Job payload: airline ID, route, dates, cabin class
+- [x] Write Go code to dispatch one job per airline into Kafka topic
+- [x] Job payload: airline ID, route, dates, cabin class
 
 **Step 3 — Build Worker Pool**
-- [ ] Write Go worker pool (5–10 concurrent workers)
-- [ ] Each worker pulls a job from Kafka
-- [ ] Each worker spawns a Playwright browser instance
-- [ ] Worker scrapes airline, stores raw result in MongoDB
-- [ ] Worker acknowledges job completion back to Kafka
+- [x] Write Go worker pool (5–10 concurrent workers)
+- [x] Each worker pulls a job from Kafka
+- [x] Each worker spawns a Playwright browser instance
+- [x] Worker scrapes airline, stores raw result in MongoDB
+- [x] Worker acknowledges job completion back to Kafka
 
 **Step 4 — Add More Airlines**
-- [ ] Add American Airlines parser
+- [x] Add American Airlines parser — anonymous award search, reads the `ng-state` SSR JSON from aa.com; scraper `internal/scraper/airlines/american.go`, parser `internal/etl/parsers/american.go`
 - [ ] Add Delta Airlines parser
 - [ ] Add Air Canada parser
 - [ ] Test all three running in parallel via worker pool

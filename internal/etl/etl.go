@@ -19,7 +19,8 @@ type Parser interface {
 }
 
 var parsersByAirline = map[string]Parser{
-	"united": parsers.United{},
+	"united":   parsers.United{},
+	"american": parsers.American{},
 }
 
 // Run reads every raw scrape from MongoDB, normalizes it via the parser

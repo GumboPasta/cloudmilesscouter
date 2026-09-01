@@ -13,5 +13,6 @@ docker/pgadmin/pgpass
 *.test
 *.out
 
-# Playwright persistent browser profile — contains live United/Akamai session cookies, never commit
+# Playwright persistent browser profiles — contain live airline/Akamai session cookies, never commit
 .united-profile/
+.american-profile/

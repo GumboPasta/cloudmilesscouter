@@ -23,15 +23,55 @@ const (
 	chooseFlightsBase = "https://www.united.com/en/us/fsr/choose-flights"
 )
 
+// unitedAirportNames maps IATA airport/metro codes to the "City, ST, US (XXX)"
+// display strings United's choose-flights URL wants in its f/t params. The
+// format (Title Case, multi-airport metros shown as "(All Airports)") is taken
+// from United's own airport strings in
+// testdata/samples/united_dfw_nyc_results.json. Anything not listed is passed
+// through unchanged, so a full display string still works exactly as before and
+// an unknown code is left for United to resolve.
+//
+// TODO: not yet confirmed against a live United search (the profile needs a
+// re-bootstrap first). Verify the exact string United accepts and extend the
+// table as routes get tested.
+var unitedAirportNames = map[string]string{
+	"BOS": "Boston, MA, US (BOS)",
+	"CHI": "Chicago, IL, US (All Airports)",
+	"DCA": "Washington, DC, US (DCA)",
+	"DEN": "Denver, CO, US (DEN)",
+	"DFW": "Dallas, TX, US (DFW)",
+	"EWR": "Newark, NJ, US (EWR)",
+	"FLL": "Fort Lauderdale, FL, US (FLL)",
+	"IAD": "Washington, DC, US (IAD)",
+	"IAH": "Houston, TX, US (IAH)",
+	"JFK": "New York, NY, US (JFK)",
+	"LAX": "Los Angeles, CA, US (LAX)",
+	"LGA": "New York, NY, US (LGA)",
+	"NYC": "New York, NY, US (All Airports)",
+	"ORD": "Chicago, IL, US (ORD)",
+	"SFO": "San Francisco, CA, US (SFO)",
+	"WAS": "Washington, DC, US (All Airports)",
+}
+
+// unitedAirportName resolves an IATA code to United's display string, or returns
+// the input unchanged if it isn't a known code (already a display string, or an
+// airport not in the table yet).
+func unitedAirportName(code string) string {
+	if name, ok := unitedAirportNames[strings.ToUpper(strings.TrimSpace(code))]; ok {
+		return name
+	}
+	return code
+}
+
 // BuildChooseFlightsURL builds the deep-link URL that triggers United's
 // FetchFlights search, matching the pattern captured from a working manual
-// search. Origin/Destination must already be in United's display-string
-// format (e.g. "DALLAS, TX, US (ALL AIRPORTS)") — an IATA-code lookup is a
-// future enhancement, not built here.
+// search. Origin/Destination are IATA codes (e.g. "DFW", "NYC"), resolved to
+// United's display-string format via unitedAirportName; a raw display string is
+// also accepted.
 func BuildChooseFlightsURL(p scraper.SearchParams) string {
 	q := url.Values{}
-	q.Set("f", p.Origin)
-	q.Set("t", p.Destination)
+	q.Set("f", unitedAirportName(p.Origin))
+	q.Set("t", unitedAirportName(p.Destination))
 	q.Set("d", p.Date.Format("2006-01-02"))
 	q.Set("tt", "1")
 	q.Set("at", "1")
