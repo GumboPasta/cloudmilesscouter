@@ -131,7 +131,7 @@ This project is phased intentionally. **Phases 1 and 2 have zero queue infrastru
 
 **Step 4 — Add More Airlines**
 - [x] Add American Airlines parser — anonymous award search, reads the `ng-state` SSR JSON from aa.com; scraper `internal/scraper/airlines/american.go`, parser `internal/etl/parsers/american.go`
-- [ ] Add Delta Airlines parser
+- [x] Add Delta Airlines parser — anonymous "Shop with Miles" search; results page has no JSON, so the scraper extracts the DOM in-browser (`internal/scraper/airlines/delta.go`), parser `internal/etl/parsers/delta.go`
 - [ ] Add Air Canada parser
 - [ ] Test all three running in parallel via worker pool
 

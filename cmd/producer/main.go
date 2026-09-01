@@ -12,8 +12,9 @@ import (
 	"cloudmilesscouter/internal/queue"
 )
 
-// airlines is the set of airlines one search fans out to. Adding an airline
-// here dispatches a job for it; the matching worker/parser lands in Step 4.
+// airlines is the set of airlines one search fans out to. A job is dispatched
+// for each; the worker skips any without a scraper registered in
+// internal/scraper/airlines.Scrapers (Air Canada is still pending).
 var airlines = []string{"united", "american", "delta"}
 
 func main() {
