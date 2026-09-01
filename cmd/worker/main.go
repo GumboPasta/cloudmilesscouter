@@ -5,12 +5,15 @@
 // Only airlines registered in internal/scraper/airlines.Scrapers are scraped;
 // jobs for others are logged and skipped until their scraper lands.
 //
-// Failure handling (Step 5): a failed scrape or store is re-queued with an
-// incremented attempt count after an exponential backoff, up to cfg.MaxAttempts
-// tries, then dropped with a structured "giving up" log (a dead-letter topic is
-// Phase 6). A per-airline circuit breaker fails jobs fast for a cooldown once an
-// airline site has failed repeatedly, so the pool stops launching browsers at a
-// site that is down.
+// Delivery is at-most-once: the fetch loop commits each message before handing
+// it to a worker, so a crash mid-scrape does not redeliver the job.
+//
+// Failure handling (Step 5): a failed scrape or store is re-queued as a fresh
+// message with an incremented attempt count after an exponential backoff, up to
+// cfg.MaxAttempts tries, then dropped with a structured "giving up" log (a
+// dead-letter topic is Phase 6). A per-airline circuit breaker fails jobs fast
+// for a cooldown once an airline site has failed repeatedly, so the pool stops
+// launching browsers at a site that is down.
 package main
 
 import (
@@ -76,7 +79,7 @@ func main() {
 		go func(id int) {
 			defer wg.Done()
 			for msg := range jobs {
-				process(ctx, cfg, client, consumer, producer, brk, id, msg)
+				process(ctx, cfg, client, producer, brk, id, msg)
 			}
 		}(i)
 	}
@@ -90,6 +93,11 @@ func main() {
 			slog.Error("fetch failed", "err", err)
 			continue
 		}
+		// Commit before the scrape runs: at-most-once. A failed scrape is
+		// recovered by the re-enqueue in retry, not by Kafka redelivery.
+		if err := consumer.Commit(ctx, msg); err != nil {
+			slog.Error("commit failed", "err", err, "partition", msg.Partition, "offset", msg.Offset)
+		}
 		select {
 		case jobs <- msg:
 		case <-ctx.Done():
@@ -101,34 +109,31 @@ func main() {
 	slog.Info("worker pool stopped")
 }
 
-func process(ctx context.Context, cfg config.Config, client *mongo.Client, consumer *queue.Consumer, producer *queue.Producer, brk *breaker.Breaker, workerID int, msg kafka.Message) {
+func process(ctx context.Context, cfg config.Config, client *mongo.Client, producer *queue.Producer, brk *breaker.Breaker, workerID int, msg kafka.Message) {
 	job, err := queue.Decode(msg)
 	if err != nil {
 		slog.Error("undecodable job, skipping", "worker", workerID, "err", err, "raw", string(msg.Value))
-		commit(ctx, consumer, msg)
 		return
 	}
 
 	logJob := slog.With("worker", workerID, "airline", job.Airline, "origin", job.Origin,
 		"destination", job.Destination, "date", job.Date, "cabin", job.Cabin, "attempt", job.Attempt)
 
-	// Bad airline or date can never succeed on a retry — commit and move on.
+	// Bad airline or date can never succeed on a retry — skip and move on.
 	scrapeFn, ok := airlines.Scrapers[job.Airline]
 	if !ok {
 		logJob.Warn("no scraper registered for airline, skipping")
-		commit(ctx, consumer, msg)
 		return
 	}
 	date, err := time.Parse("2006-01-02", job.Date)
 	if err != nil {
 		logJob.Error("invalid job date, skipping", "err", err)
-		commit(ctx, consumer, msg)
 		return
 	}
 
 	if !brk.Allow(job.Airline) {
 		logJob.Warn("circuit open for airline, deferring job", "reason", "circuit_open")
-		retry(ctx, cfg, producer, consumer, logJob, job, msg, "circuit_open")
+		retry(ctx, cfg, producer, logJob, job, "circuit_open")
 		return
 	}
 
@@ -144,7 +149,7 @@ func process(ctx context.Context, cfg config.Config, client *mongo.Client, consu
 			logJob.Warn("circuit opened for airline", "cooldown", breaker.Cooldown.String())
 		}
 		logJob.Error("scrape failed", "err", err, "reason", reason)
-		retry(ctx, cfg, producer, consumer, logJob, job, msg, reason)
+		retry(ctx, cfg, producer, logJob, job, reason)
 		return
 	}
 	brk.RecordSuccess(job.Airline)
@@ -159,24 +164,21 @@ func process(ctx context.Context, cfg config.Config, client *mongo.Client, consu
 	}
 	if err := storage.StoreRawScrape(context.Background(), client, doc); err != nil {
 		logJob.Error("store failed", "err", err, "reason", "store")
-		retry(ctx, cfg, producer, consumer, logJob, job, msg, "store")
+		retry(ctx, cfg, producer, logJob, job, "store")
 		return
 	}
 
-	commit(ctx, consumer, msg)
 	logJob.Info("job done", "bytes", len(body))
 }
 
-// retry re-queues job with an incremented attempt after an exponential backoff,
-// or drops it once cfg.MaxAttempts tries are used up. The original message is
-// committed only once the retry copy is safely enqueued (or the job is given up
-// on); if ctx is cancelled during the backoff the job is left uncommitted so
-// Kafka redelivers it on the next run.
-func retry(ctx context.Context, cfg config.Config, producer *queue.Producer, consumer *queue.Consumer, logJob *slog.Logger, job queue.ScrapeJob, msg kafka.Message, reason string) {
+// retry re-queues job as a fresh message with an incremented attempt after an
+// exponential backoff, or drops it once cfg.MaxAttempts tries are used up. The
+// original message is already committed (at-most-once), so if ctx is cancelled
+// during the backoff or the enqueue fails, the job is simply dropped.
+func retry(ctx context.Context, cfg config.Config, producer *queue.Producer, logJob *slog.Logger, job queue.ScrapeJob, reason string) {
 	next := job.Attempt + 1
 	if next >= cfg.MaxAttempts {
 		logJob.Error("job failed permanently, giving up", "reason", reason, "attempts", next)
-		commit(ctx, consumer, msg)
 		return
 	}
 
@@ -185,16 +187,14 @@ func retry(ctx context.Context, cfg config.Config, producer *queue.Producer, con
 	select {
 	case <-time.After(delay):
 	case <-ctx.Done():
-		logJob.Warn("shutdown during backoff, job left for redelivery", "reason", reason)
+		logJob.Warn("shutdown during backoff, retry abandoned", "reason", reason)
 		return
 	}
 
 	job.Attempt = next
 	if err := producer.Enqueue(context.Background(), job); err != nil {
-		logJob.Error("re-queue failed, job left for redelivery", "err", err)
-		return
+		logJob.Error("re-queue failed, job dropped", "err", err)
 	}
-	commit(ctx, consumer, msg)
 }
 
 // backoff returns base doubled once per prior attempt, capped at maxBackoff.
@@ -222,19 +222,5 @@ func classify(err error) string {
 		return "browser"
 	default:
 		return "other"
-	}
-}
-
-// commit acknowledges msg back to Kafka. During shutdown ctx is already
-// cancelled, so it falls back to a fresh timeout to still record finished work.
-func commit(ctx context.Context, consumer *queue.Consumer, msg kafka.Message) {
-	commitCtx := ctx
-	if ctx.Err() != nil {
-		var cancel context.CancelFunc
-		commitCtx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-	}
-	if err := consumer.Commit(commitCtx, msg); err != nil {
-		slog.Error("commit failed", "err", err, "partition", msg.Partition, "offset", msg.Offset)
 	}
 }
