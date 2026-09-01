@@ -16,9 +16,7 @@ const unitedDateTimeLayout = "2006-01-02 15:04"
 
 type unitedResponse struct {
 	Data struct {
-		DepartureAirports string `json:"DepartureAirports"`
-		ArrivalAirports   string `json:"ArrivalAirports"`
-		Trips             []struct {
+		Trips []struct {
 			Flights []unitedFlight `json:"Flights"`
 		} `json:"Trips"`
 	} `json:"data"`
@@ -127,10 +125,12 @@ func (United) Parse(raw storage.RawScrape) ([]storage.NormalizedAward, error) {
 					currency = "USD"
 				}
 
+				awardType := normalizeUnitedAwardType(p.AwardType)
+
 				// Dedupe United's "-NOT-MIXED" duplicate products, which
 				// repeat the same cabin/award-type/price under a different
 				// ProductType.
-				key := fmt.Sprintf("%s|%s|%s|%d", flightNumber, cabin, p.AwardType, pointsCost)
+				key := fmt.Sprintf("%s|%s|%s|%d", flightNumber, cabin, awardType, pointsCost)
 				if seen[key] {
 					continue
 				}
@@ -139,12 +139,12 @@ func (United) Parse(raw storage.RawScrape) ([]storage.NormalizedAward, error) {
 				awards = append(awards, storage.NormalizedAward{
 					AirlineCode:       "united",
 					AirlineName:       "United Airlines",
-					Origin:            resp.Data.DepartureAirports,
-					Destination:       resp.Data.ArrivalAirports,
+					Origin:            raw.Origin,
+					Destination:       raw.Destination,
 					SearchDate:        raw.SearchDate,
 					ScrapedAt:         raw.ScrapedAt,
 					Cabin:             cabin,
-					AwardType:         p.AwardType,
+					AwardType:         awardType,
 					Currency:          currency,
 					FlightNumber:      flightNumber,
 					FlightOrigin:      f.Origin,
@@ -161,6 +161,23 @@ func (United) Parse(raw storage.RawScrape) ([]storage.NormalizedAward, error) {
 	}
 
 	return awards, nil
+}
+
+// normalizeUnitedAwardType maps United's payload AwardType to the lowercase
+// vocabulary shared across parsers: "Saver" → saver (a further-discounted chart
+// tier), "Standard" → standard (the fixed award chart). United is the only
+// airline whose award type comes from the scraped payload rather than a literal,
+// so an unrecognized value is lowercased and logged rather than dropped.
+func normalizeUnitedAwardType(v string) string {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "saver":
+		return "saver"
+	case "standard":
+		return "standard"
+	default:
+		slog.Warn("united: unrecognized award type", "award_type", v)
+		return strings.ToLower(strings.TrimSpace(v))
+	}
 }
 
 // mapCabin maps United's CabinType (and, where CabinType is ambiguous,

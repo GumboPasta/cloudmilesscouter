@@ -48,7 +48,7 @@ func TestDeltaParse(t *testing.T) {
 		if a.PointsCost <= 0 || a.TaxesFees <= 0 {
 			t.Errorf("non-positive points/taxes: %+v", a)
 		}
-		if a.Currency != "USD" || a.AwardType != "Dynamic" {
+		if a.Currency != "USD" || a.AwardType != "dynamic" {
 			t.Errorf("currency/awardType = %q/%q", a.Currency, a.AwardType)
 		}
 		if !a.ArriveTime.After(a.DepartTime) {

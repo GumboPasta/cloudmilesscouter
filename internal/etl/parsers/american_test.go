@@ -65,11 +65,11 @@ func TestAmericanParse(t *testing.T) {
 		awardTypes[a.AwardType]++
 	}
 
-	if awardTypes["Dynamic"] == 0 || awardTypes["Standard"] == 0 {
-		t.Errorf("award type split = %v, want both Dynamic and Standard present", awardTypes)
+	if awardTypes["dynamic"] == 0 || awardTypes["standard"] == 0 {
+		t.Errorf("award type split = %v, want both dynamic and standard present", awardTypes)
 	}
-	if awardTypes["Dynamic"]+awardTypes["Standard"] != 76 {
-		t.Errorf("award types other than Dynamic/Standard present: %v", awardTypes)
+	if awardTypes["dynamic"]+awardTypes["standard"] != 76 {
+		t.Errorf("award types other than dynamic/standard present: %v", awardTypes)
 	}
 
 	find := func(flight, cabin string) *storage.NormalizedAward {
@@ -102,8 +102,8 @@ func TestAmericanParse(t *testing.T) {
 	if got := nonstop.DepartTime.Format("2006-01-02 15:04"); got != "2026-11-20 08:25" {
 		t.Errorf("AA1766 depart = %q, want 2026-11-20 08:25 (local wall time)", got)
 	}
-	if nonstop.AwardType != "Dynamic" {
-		t.Errorf("AA1766 economy award type = %q, want Dynamic", nonstop.AwardType)
+	if nonstop.AwardType != "dynamic" {
+		t.Errorf("AA1766 economy award type = %q, want dynamic", nonstop.AwardType)
 	}
 
 	connecting := find("AA855", "first")

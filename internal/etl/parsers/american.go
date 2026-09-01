@@ -18,11 +18,7 @@ const americanDateTimeLayout = time.RFC3339
 type americanResponse struct {
 	SearchData struct {
 		ItineraryResult struct {
-			Error            string `json:"error"`
-			ResponseMetadata struct {
-				Origin      americanAirport `json:"origin"`
-				Destination americanAirport `json:"destination"`
-			} `json:"responseMetadata"`
+			Error  string          `json:"error"`
 			Slices []americanSlice `json:"slices"`
 		} `json:"itineraryResult"`
 	} `json:"SearchData"`
@@ -75,8 +71,6 @@ func (American) Parse(raw storage.RawScrape) ([]storage.NormalizedAward, error) 
 	}
 
 	ir := resp.SearchData.ItineraryResult
-	searchOrigin := ir.ResponseMetadata.Origin.Code
-	searchDestination := ir.ResponseMetadata.Destination.Code
 
 	seen := make(map[string]bool)
 	var awards []storage.NormalizedAward
@@ -118,11 +112,11 @@ func (American) Parse(raw storage.RawScrape) ([]storage.NormalizedAward, error) 
 				continue
 			}
 
-			// American prices every award dynamically today; a false flag marks
-			// the older fixed-chart (saver) pricing, which still shows up.
-			awardType := "Dynamic"
+			// American prices most awards dynamically today; a false flag marks
+			// the older fixed-chart ("standard") pricing, which still shows up.
+			awardType := "dynamic"
 			if !p.DynamicFare {
-				awardType = "Standard"
+				awardType = "standard"
 			}
 			currency := p.PerPassengerTaxesAndFees.Currency
 			if currency == "" {
@@ -141,8 +135,8 @@ func (American) Parse(raw storage.RawScrape) ([]storage.NormalizedAward, error) 
 			awards = append(awards, storage.NormalizedAward{
 				AirlineCode:       "american",
 				AirlineName:       "American Airlines",
-				Origin:            searchOrigin,
-				Destination:       searchDestination,
+				Origin:            raw.Origin,
+				Destination:       raw.Destination,
 				SearchDate:        raw.SearchDate,
 				ScrapedAt:         raw.ScrapedAt,
 				Cabin:             cabin,

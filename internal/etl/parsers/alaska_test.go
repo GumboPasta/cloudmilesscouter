@@ -45,7 +45,7 @@ func TestAlaskaParse(t *testing.T) {
 		if a.Origin != "PDX" || a.Destination != "JFK" {
 			t.Errorf("bad searched route: %s -> %s", a.Origin, a.Destination)
 		}
-		if a.PointsCost <= 0 || a.Currency != "USD" || a.AwardType != "Dynamic" {
+		if a.PointsCost <= 0 || a.Currency != "USD" || a.AwardType != "dynamic" {
 			t.Errorf("bad points/currency/awardType: %+v", a)
 		}
 		if !a.ArriveTime.After(a.DepartTime) {

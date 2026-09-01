@@ -14,10 +14,6 @@ import (
 const deltaClockLayout = "3:04 pm"
 
 type deltaResponse struct {
-	Route struct {
-		Origin      string `json:"origin"`
-		Destination string `json:"destination"`
-	} `json:"route"`
 	Flights []deltaFlight `json:"flights"`
 }
 
@@ -50,15 +46,6 @@ func (Delta) Parse(raw storage.RawScrape) ([]storage.NormalizedAward, error) {
 	var resp deltaResponse
 	if err := json.Unmarshal([]byte(raw.RawPayload), &resp); err != nil {
 		return nil, fmt.Errorf("unmarshal delta response: %w", err)
-	}
-
-	origin := resp.Route.Origin
-	if origin == "" {
-		origin = raw.Origin
-	}
-	destination := resp.Route.Destination
-	if destination == "" {
-		destination = raw.Destination
 	}
 
 	seen := make(map[string]bool)
@@ -108,12 +95,12 @@ func (Delta) Parse(raw storage.RawScrape) ([]storage.NormalizedAward, error) {
 			awards = append(awards, storage.NormalizedAward{
 				AirlineCode:       "delta",
 				AirlineName:       "Delta Air Lines",
-				Origin:            origin,
-				Destination:       destination,
+				Origin:            raw.Origin,
+				Destination:       raw.Destination,
 				SearchDate:        raw.SearchDate,
 				ScrapedAt:         raw.ScrapedAt,
 				Cabin:             cabin,
-				AwardType:         "Dynamic", // Delta SkyMiles has no saver/chart tier
+				AwardType:         "dynamic", // Delta SkyMiles has no saver/chart tier
 				Currency:          "USD",
 				FlightNumber:      flightNumber,
 				FlightOrigin:      f.Origin,
