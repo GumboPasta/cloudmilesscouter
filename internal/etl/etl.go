@@ -58,8 +58,14 @@ func Run(ctx context.Context, client *mongo.Client, db *sql.DB) error {
 	}
 
 	var awards []storage.NormalizedAward
+	// Keys we parsed this run, so WriteAwards clears each one's stale rows even
+	// when the parse produced zero awards (empty extraction, still a success).
+	// A doc we skip (no parser, or a parse error) is left untouched: we don't
+	// know the airline's real state, and wiping on a transient parse error would
+	// be worse than serving slightly stale rows.
+	clearKeys := make([]storage.RawScrapeKey, 0, len(newest))
 	skipped := 0
-	for _, doc := range newest {
+	for k, doc := range newest {
 		parser, ok := parsersByAirline[doc.Airline]
 		if !ok {
 			slog.Warn("no parser registered for airline, skipping", "airline", doc.Airline)
@@ -73,13 +79,19 @@ func Run(ctx context.Context, client *mongo.Client, db *sql.DB) error {
 			skipped++
 			continue
 		}
+		clearKeys = append(clearKeys, storage.RawScrapeKey{
+			AirlineCode: k.airline,
+			Origin:      k.origin,
+			Destination: k.destination,
+			SearchDate:  k.searchDate,
+		})
 		awards = append(awards, parsed...)
 	}
 
-	if err := storage.WriteAwards(ctx, db, awards); err != nil {
+	if err := storage.WriteAwards(ctx, db, awards, clearKeys); err != nil {
 		return err
 	}
 
-	slog.Info("etl run complete", "docs", len(docs), "docs_deduped", len(newest), "awards_written", len(awards), "docs_skipped", skipped)
+	slog.Info("etl run complete", "docs", len(docs), "docs_deduped", len(newest), "keys_parsed", len(clearKeys), "awards_written", len(awards), "docs_skipped", skipped)
 	return nil
 }

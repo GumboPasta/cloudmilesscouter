@@ -34,10 +34,14 @@ import (
 
 const (
 	e2eAirline = "e2e"
-	e2eCode    = "E2E"
-	e2eOrigin  = "ZZ1"
-	e2eDest    = "ZZ2"
-	e2eDate    = "2099-01-02"
+	// The program name in RawScrape.Airline and the airlines.code column are the
+	// same string for every real parser ("united", "delta", ...), and the ETL's
+	// clear-key path (Fix #3) looks up the airline by that shared string, so the
+	// stub keeps them identical too.
+	e2eCode   = e2eAirline
+	e2eOrigin = "ZZ1"
+	e2eDest   = "ZZ2"
+	e2eDate   = "2099-01-02"
 )
 
 // e2eParser turns the stub scraper's constant blob into one award row.
@@ -294,5 +298,106 @@ func TestETLLatestDocWins(t *testing.T) {
 	}
 	if points[0] != 22222 {
 		t.Fatalf("want award row from the newer doc (22222 points), got %d", points[0])
+	}
+}
+
+// e2eNilOnEmptyParser behaves like e2eParser for a payload with points, but
+// treats a zero-points payload as a valid empty extraction (nil, nil) rather
+// than an error — the selector-drift case Fix #3 has to clear stale rows for.
+type e2eNilOnEmptyParser struct{}
+
+func (e2eNilOnEmptyParser) Parse(raw storage.RawScrape) ([]storage.NormalizedAward, error) {
+	var body struct {
+		Points int `json:"points"`
+	}
+	if err := json.Unmarshal([]byte(raw.RawPayload), &body); err != nil {
+		return nil, err
+	}
+	if body.Points == 0 {
+		return nil, nil // empty extraction, still a success
+	}
+	return e2eParser{}.Parse(raw)
+}
+
+// TestETLZeroAwardClearsStaleRows pushes a doc that parses to one award and runs
+// the ETL, then pushes a newer doc for the same searched route+date whose
+// payload parses to zero awards and runs the ETL again, asserting the stale row
+// is gone. Without Fix #3 the DELETE only runs for keys present in the awards
+// slice, so the zero-award run leaves the first run's row in Postgres.
+func TestETLZeroAwardClearsStaleRows(t *testing.T) {
+	cfg := config.Load()
+
+	connectCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	client, err := storage.Connect(connectCtx, cfg.MongoURI)
+	if err != nil {
+		t.Skipf("mongo not reachable at %s: %v", cfg.MongoURI, err)
+	}
+	t.Cleanup(func() { client.Disconnect(context.Background()) })
+
+	pg, err := storage.ConnectPostgres(connectCtx, cfg.PostgresURI)
+	if err != nil {
+		t.Skipf("postgres not reachable: %v", err)
+	}
+	t.Cleanup(func() { pg.Close() })
+
+	etl.RegisterParser(e2eAirline, e2eNilOnEmptyParser{})
+
+	cleanupE2E(t, client, pg)
+	t.Cleanup(func() { cleanupE2E(t, client, pg) })
+
+	searchDate, err := time.Parse("2006-01-02", e2eDate)
+	if err != nil {
+		t.Fatalf("parse date: %v", err)
+	}
+
+	countRows := func() int {
+		t.Helper()
+		var n int
+		if err := pg.QueryRow(`
+			SELECT count(*) FROM awards a
+			JOIN airlines ai ON ai.id = a.airline_id
+			JOIN routes r ON r.id = a.route_id
+			WHERE ai.code = $1 AND r.origin = $2 AND r.destination = $3`,
+			e2eCode, e2eOrigin, e2eDest).Scan(&n); err != nil {
+			t.Fatalf("query awards: %v", err)
+		}
+		return n
+	}
+
+	base := storage.RawScrape{
+		Airline:     e2eAirline,
+		Origin:      e2eOrigin,
+		Destination: e2eDest,
+		SearchDate:  searchDate,
+	}
+
+	// --- first run: a real result lands one row ---
+	withAward := base
+	withAward.ScrapedAt = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	withAward.RawPayload = `{"points":33333}`
+	if err := storage.StoreRawScrape(context.Background(), client, withAward); err != nil {
+		t.Fatalf("store raw scrape: %v", err)
+	}
+	if err := etl.Run(context.Background(), client, pg); err != nil {
+		t.Fatalf("etl.Run (with award): %v", err)
+	}
+	if got := countRows(); got != 1 {
+		t.Fatalf("after first run want 1 award row, got %d", got)
+	}
+
+	// --- second run: a newer empty extraction for the same key clears it ---
+	empty := base
+	empty.ScrapedAt = withAward.ScrapedAt.Add(time.Hour)
+	empty.RawPayload = `{"points":0}`
+	if err := storage.StoreRawScrape(context.Background(), client, empty); err != nil {
+		t.Fatalf("store raw scrape: %v", err)
+	}
+	if err := etl.Run(context.Background(), client, pg); err != nil {
+		t.Fatalf("etl.Run (empty): %v", err)
+	}
+	if got := countRows(); got != 0 {
+		t.Fatalf("after zero-award run want 0 award rows for the key, got %d", got)
 	}
 }
