@@ -14,8 +14,8 @@ import (
 
 // airlines is the set of airlines one search fans out to. A job is dispatched
 // for each; the worker skips any without a scraper registered in
-// internal/scraper/airlines.Scrapers (Air Canada is still pending).
-var airlines = []string{"united", "american", "delta"}
+// internal/scraper/airlines.Scrapers.
+var airlines = []string{"united", "american", "delta", "alaska"}
 
 func main() {
 	cfg := config.Load()

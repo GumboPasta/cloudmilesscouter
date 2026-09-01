@@ -80,3 +80,9 @@ Indexed on `(route_id, search_date)` for the Phase 4 search query pattern.
 - `depart_time`/`arrive_time`: Delta shows local clock times with no date; an arrival earlier in the day than the departure is treated as next-day.
 - `award_type` is always `Dynamic` — Delta SkyMiles has no saver/award-chart tier.
 - Scraper: no login, Akamai present so headed only. The airport pickers are an overlay (click trigger → type IATA → pick first option); the calendar shows two months and is paged forward to the target date. Tolerates form values the persistent profile remembers.
+
+### Alaska (`internal/etl/parsers/alaska.go`)
+- Alaska's award search (`ShoppingMethod=onlineaward`) is anonymous **and deep-linkable** — `internal/scraper/airlines/alaska.go` just navigates `alaskaair.com/search/results?O=…&D=…&OD=…&RT=false&ShoppingMethod=onlineaward` with no form. The Svelte results grid has no JSON payload, so it extracts the DOM via `page.Evaluate` (`AlaskaExtractJS`). Alaska does not hard-block headless, so this scraper can run `HEADLESS=true`.
+- Two cabin columns: **Main → economy, First → first** (Saver also → economy). `award_type` is always `Dynamic`.
+- Connecting itineraries render as "Multiple flights" with **no per-segment flight number**; those get a synthetic `AS <via>` (e.g. `AS SEA`, `AS SAN`) so rows stay distinguishable, deduped with the departure time.
+- `depart_time`/`arrive_time`: local clock times; the grid marks overnight arrivals with "+N day", and an arrival earlier than the departure is also treated as next-day.

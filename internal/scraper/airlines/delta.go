@@ -242,22 +242,45 @@ func fillDeltaSearchForm(page playwright.Page, params scraper.SearchParams) erro
 	return nil
 }
 
-// selectDeltaDate pages the calendar forward until date's cell is visible, then
-// clicks it.
+// selectDeltaDate pages Delta's two-month calendar forward until the target
+// day's cell is on screen, then clicks it. The day cell is
+// <button data-date-value="MM-DD-YYYY">; cells for months outside the visible
+// window are in the DOM but hidden, so the ":visible" filter matters.
 func selectDeltaDate(page playwright.Page, date time.Time) error {
-	day := page.Locator(fmt.Sprintf("[data-date-value=%q]", date.Format("01-02-2006"))).First()
-	next := page.Locator(".date-picker__nav-button--right, [aria-label='Next month']").First()
+	// Delta's data-date-value has no leading zeros: "12-5-2026", "9-1-2026".
+	dateValue := date.Format("1-2-2006")
+	day := page.Locator(fmt.Sprintf("[data-date-value=%q]", dateValue)).First()
+	next := page.Locator(".date-picker__nav-button--right").First()
 
-	for i := 0; i < 15; i++ {
-		if vis, _ := day.IsVisible(); vis {
-			return day.Click(playwright.LocatorClickOptions{Timeout: playwright.Float(5000)})
+	if err := next.WaitFor(playwright.LocatorWaitForOptions{
+		State: playwright.WaitForSelectorStateAttached, Timeout: playwright.Float(15000),
+	}); err != nil {
+		return fmt.Errorf("calendar did not open: %w", err)
+	}
+
+	// The calendar renders a few months up front and appends more each time the
+	// forward button is pressed; page until the target day's cell exists.
+	for i := 0; i < 12; i++ {
+		if n, _ := day.Count(); n > 0 {
+			break
 		}
-		if err := next.Click(playwright.LocatorClickOptions{Timeout: playwright.Float(5000)}); err != nil {
+		if disabled, _ := next.IsDisabled(); disabled {
+			break
+		}
+		if err := next.Click(playwright.LocatorClickOptions{Timeout: playwright.Float(8000)}); err != nil {
 			return fmt.Errorf("advance calendar toward %s: %w", date.Format("2006-01-02"), err)
 		}
-		page.WaitForTimeout(350)
+		page.WaitForTimeout(500)
 	}
-	return fmt.Errorf("calendar never showed %s", date.Format("2006-01-02"))
+	if n, _ := day.Count(); n == 0 {
+		return fmt.Errorf("calendar never rendered %s", date.Format("2006-01-02"))
+	}
+	// The cell can be in an off-screen month pane, so click it directly rather
+	// than through Playwright's visibility checks.
+	if _, err := day.Evaluate("el => el.click()", nil); err != nil {
+		return fmt.Errorf("click date %s: %w", date.Format("2006-01-02"), err)
+	}
+	return nil
 }
 
 // HasResultsDelta reports whether an extracted Delta payload has any flights.

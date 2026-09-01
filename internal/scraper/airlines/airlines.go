@@ -23,4 +23,7 @@ var Scrapers = map[string]ScrapeFunc{
 	"delta": func(cfg config.Config, params scraper.SearchParams) ([]byte, error) {
 		return ScrapeDelta(cfg.DeltaProfileDir, cfg.Headless, params)
 	},
+	"alaska": func(cfg config.Config, params scraper.SearchParams) ([]byte, error) {
+		return ScrapeAlaska(cfg.AlaskaProfileDir, cfg.Headless, params)
+	},
 }

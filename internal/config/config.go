@@ -13,6 +13,7 @@ type Config struct {
 	UnitedPassword     string
 	AmericanProfileDir string
 	DeltaProfileDir    string
+	AlaskaProfileDir   string
 	Headless           bool
 	KafkaBrokers       string
 	KafkaGroupID       string
@@ -29,6 +30,7 @@ func Load() Config {
 		UnitedPassword:     getEnv("UNITED_PASSWORD", ""),
 		AmericanProfileDir: getEnv("AMERICAN_PROFILE_DIR", ".american-profile"),
 		DeltaProfileDir:    getEnv("DELTA_PROFILE_DIR", ".delta-profile"),
+		AlaskaProfileDir:   getEnv("ALASKA_PROFILE_DIR", ".alaska-profile"),
 		Headless:           getEnv("HEADLESS", "false") == "true",
 		KafkaBrokers:       getEnv("KAFKA_BROKERS", "localhost:9092"),
 		KafkaGroupID:       getEnv("KAFKA_GROUP_ID", "scrape-workers"),

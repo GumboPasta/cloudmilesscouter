@@ -132,8 +132,8 @@ This project is phased intentionally. **Phases 1 and 2 have zero queue infrastru
 **Step 4 — Add More Airlines**
 - [x] Add American Airlines parser — anonymous award search, reads the `ng-state` SSR JSON from aa.com; scraper `internal/scraper/airlines/american.go`, parser `internal/etl/parsers/american.go`
 - [x] Add Delta Airlines parser — anonymous "Shop with Miles" search; results page has no JSON, so the scraper extracts the DOM in-browser (`internal/scraper/airlines/delta.go`), parser `internal/etl/parsers/delta.go`
-- [ ] Add Air Canada parser
-- [ ] Test all three running in parallel via worker pool
+- [x] ~~Add Air Canada parser~~ — Aeroplan award search requires a login (no anonymous access), so swapped for **Alaska Airlines**: anonymous "Use points" search via a deep-link URL, DOM extraction, and it runs headless. Scraper `internal/scraper/airlines/alaska.go`, parser `internal/etl/parsers/alaska.go`. Air Canada deferred to Phase 7.
+- [x] Test all four running in parallel via worker pool — one `producer` search fans out to 4 jobs; the worker pool scrapes American, Delta and Alaska concurrently and all land in MongoDB → ETL → PostgreSQL. (United needs a fresh `scraper bootstrap` login on this machine — its profile session expired — but the code path is unchanged from Phase 1.)
 
 **Step 5 — Add Circuit Breakers & Retry Logic**
 - [ ] If airline site is down, fail gracefully

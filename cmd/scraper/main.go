@@ -111,6 +111,8 @@ func hasResults(airline string, body []byte) (bool, error) {
 		return airlines.HasResultsAmerican(body)
 	case "delta":
 		return airlines.HasResultsDelta(body)
+	case "alaska":
+		return airlines.HasResultsAlaska(body)
 	default:
 		return true, nil
 	}
