@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"cloudmilesscouter/internal/config"
+	"cloudmilesscouter/internal/mailotp"
 	"cloudmilesscouter/internal/scraper"
 	"cloudmilesscouter/internal/scraper/airlines"
 	"cloudmilesscouter/internal/storage"
@@ -21,6 +22,18 @@ func main() {
 	if len(os.Args) > 1 && os.Args[1] == "bootstrap" {
 		if err := airlines.Bootstrap(cfg.UnitedProfileDir); err != nil {
 			slog.Error("bootstrap failed", "err", err)
+			os.Exit(1)
+		}
+		return
+	}
+
+	// Same one-time device-trust setup as "bootstrap", but reads United's OTP
+	// email itself via Gmail IMAP instead of waiting for a human to type it —
+	// needs UNITED_USERNAME/UNITED_PASSWORD and GMAIL_ADDRESS/GMAIL_APP_PASSWORD.
+	if len(os.Args) > 1 && os.Args[1] == "bootstrap-auto" {
+		gmail := mailotp.Config{Address: cfg.GmailAddress, AppPassword: cfg.GmailAppPassword}
+		if err := airlines.AutoBootstrap(cfg.UnitedProfileDir, cfg.UnitedUsername, cfg.UnitedPassword, gmail); err != nil {
+			slog.Error("bootstrap-auto failed", "err", err)
 			os.Exit(1)
 		}
 		return

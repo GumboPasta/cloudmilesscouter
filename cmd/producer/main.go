@@ -6,16 +6,17 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 	"time"
 
 	"cloudmilesscouter/internal/config"
 	"cloudmilesscouter/internal/queue"
 )
 
-// airlines is the set of airlines one search fans out to. A job is dispatched
-// for each; the worker skips any without a scraper registered in
-// internal/scraper/airlines.Scrapers.
-var airlines = []string{"united", "american", "delta", "alaska"}
+// defaultAirlines is the set of airlines one search fans out to. A job is
+// dispatched for each; the worker skips any without a scraper registered in
+// internal/scraper/airlines.Scrapers. Override with -airlines a,b,c.
+var defaultAirlines = []string{"united", "american", "delta", "alaska"}
 
 func main() {
 	cfg := config.Load()
@@ -25,11 +26,17 @@ func main() {
 	destination := fs.String("destination", "", `destination IATA airport/metro code, e.g. "JFK"`)
 	date := fs.String("date", "", "departure date, YYYY-MM-DD")
 	cabin := fs.String("cabin", "economy", "cabin class: economy, business, first")
+	airlinesCSV := fs.String("airlines", "", "comma-separated airline IDs to dispatch (default: all)")
 	fs.Parse(os.Args[1:])
 
 	if *origin == "" || *destination == "" || *date == "" {
-		fmt.Println(`usage: producer -origin DFW -destination JFK -date YYYY-MM-DD [-cabin economy]`)
+		fmt.Println(`usage: producer -origin DFW -destination JFK -date YYYY-MM-DD [-cabin economy] [-airlines a,b,c]`)
 		os.Exit(1)
+	}
+
+	airlines := defaultAirlines
+	if *airlinesCSV != "" {
+		airlines = strings.Split(*airlinesCSV, ",")
 	}
 
 	if _, err := time.Parse("2006-01-02", *date); err != nil {
