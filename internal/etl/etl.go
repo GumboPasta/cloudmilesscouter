@@ -25,6 +25,13 @@ var parsersByAirline = map[string]Parser{
 	"alaska":   parsers.Alaska{},
 }
 
+// RegisterParser adds or overrides the parser for an airline. It exists for the
+// integration test that pushes synthetic raw scrapes through Run; production
+// code registers parsers in the map literal above.
+func RegisterParser(airline string, p Parser) {
+	parsersByAirline[airline] = p
+}
+
 // Run reads every raw scrape from MongoDB, normalizes it via the parser
 // registered for its airline, and writes the results into Postgres.
 func Run(ctx context.Context, client *mongo.Client, db *sql.DB) error {
