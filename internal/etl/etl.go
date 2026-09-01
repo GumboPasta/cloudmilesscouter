@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"log/slog"
+	"time"
 
 	"go.mongodb.org/mongo-driver/v2/mongo"
 
@@ -32,17 +33,33 @@ func RegisterParser(airline string, p Parser) {
 	parsersByAirline[airline] = p
 }
 
-// Run reads every raw scrape from MongoDB, normalizes it via the parser
-// registered for its airline, and writes the results into Postgres.
+// Run reads every raw scrape from MongoDB, keeps only the newest doc per
+// searched route+date, normalizes each via the parser registered for its
+// airline, and writes the results into Postgres.
 func Run(ctx context.Context, client *mongo.Client, db *sql.DB) error {
 	docs, err := storage.FindRawScrapes(ctx, client)
 	if err != nil {
 		return err
 	}
 
+	// Retries (and any re-scrape) leave more than one doc for the same searched
+	// route+date. WriteAwards only clears each key once per batch, so parsing
+	// every doc would stack both scrapes' rows in Postgres. Keep the newest.
+	type rawKey struct {
+		airline, origin, destination string
+		searchDate                   time.Time
+	}
+	newest := make(map[rawKey]storage.RawScrape, len(docs))
+	for _, doc := range docs {
+		k := rawKey{doc.Airline, doc.Origin, doc.Destination, doc.SearchDate}
+		if prev, ok := newest[k]; !ok || doc.ScrapedAt.After(prev.ScrapedAt) {
+			newest[k] = doc
+		}
+	}
+
 	var awards []storage.NormalizedAward
 	skipped := 0
-	for _, doc := range docs {
+	for _, doc := range newest {
 		parser, ok := parsersByAirline[doc.Airline]
 		if !ok {
 			slog.Warn("no parser registered for airline, skipping", "airline", doc.Airline)
@@ -63,6 +80,6 @@ func Run(ctx context.Context, client *mongo.Client, db *sql.DB) error {
 		return err
 	}
 
-	slog.Info("etl run complete", "docs", len(docs), "awards_written", len(awards), "docs_skipped", skipped)
+	slog.Info("etl run complete", "docs", len(docs), "docs_deduped", len(newest), "awards_written", len(awards), "docs_skipped", skipped)
 	return nil
 }

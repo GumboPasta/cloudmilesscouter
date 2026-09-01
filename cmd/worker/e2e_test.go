@@ -210,3 +210,89 @@ func cleanupE2E(t *testing.T, client *mongo.Client, pg *sql.DB) {
 		t.Logf("cleanup airlines: %v", err)
 	}
 }
+
+// TestETLLatestDocWins pushes two raw docs for the same searched route+date with
+// different scraped_at and different points, then asserts etl.Run writes exactly
+// one award row and that it comes from the newer doc.
+func TestETLLatestDocWins(t *testing.T) {
+	cfg := config.Load()
+
+	connectCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	client, err := storage.Connect(connectCtx, cfg.MongoURI)
+	if err != nil {
+		t.Skipf("mongo not reachable at %s: %v", cfg.MongoURI, err)
+	}
+	t.Cleanup(func() { client.Disconnect(context.Background()) })
+
+	pg, err := storage.ConnectPostgres(connectCtx, cfg.PostgresURI)
+	if err != nil {
+		t.Skipf("postgres not reachable: %v", err)
+	}
+	t.Cleanup(func() { pg.Close() })
+
+	etl.RegisterParser(e2eAirline, e2eParser{})
+
+	cleanupE2E(t, client, pg)
+	t.Cleanup(func() { cleanupE2E(t, client, pg) })
+
+	searchDate, err := time.Parse("2006-01-02", e2eDate)
+	if err != nil {
+		t.Fatalf("parse date: %v", err)
+	}
+
+	base := storage.RawScrape{
+		Airline:     e2eAirline,
+		Origin:      e2eOrigin,
+		Destination: e2eDest,
+		SearchDate:  searchDate,
+	}
+	older := base
+	older.ScrapedAt = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	older.RawPayload = `{"points":11111}`
+	newer := base
+	newer.ScrapedAt = older.ScrapedAt.Add(time.Hour)
+	newer.RawPayload = `{"points":22222}`
+
+	// Insert older last so ordering can't accidentally carry the test.
+	for _, doc := range []storage.RawScrape{newer, older} {
+		if err := storage.StoreRawScrape(context.Background(), client, doc); err != nil {
+			t.Fatalf("store raw scrape: %v", err)
+		}
+	}
+
+	if err := etl.Run(context.Background(), client, pg); err != nil {
+		t.Fatalf("etl.Run: %v", err)
+	}
+
+	rows, err := pg.Query(`
+		SELECT a.points_cost FROM awards a
+		JOIN airlines ai ON ai.id = a.airline_id
+		JOIN routes r ON r.id = a.route_id
+		WHERE ai.code = $1 AND r.origin = $2 AND r.destination = $3`,
+		e2eCode, e2eOrigin, e2eDest)
+	if err != nil {
+		t.Fatalf("query awards: %v", err)
+	}
+	defer rows.Close()
+
+	var points []int
+	for rows.Next() {
+		var p int
+		if err := rows.Scan(&p); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		points = append(points, p)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("rows: %v", err)
+	}
+
+	if len(points) != 1 {
+		t.Fatalf("want exactly 1 award row, got %d: %v", len(points), points)
+	}
+	if points[0] != 22222 {
+		t.Fatalf("want award row from the newer doc (22222 points), got %d", points[0])
+	}
+}
