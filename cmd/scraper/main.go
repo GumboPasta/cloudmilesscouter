@@ -105,28 +105,11 @@ func main() {
 		os.Exit(1)
 	}
 
-	if hasResults, err := hasResults(*airline, body); err != nil {
+	if hasResults, err := airlines.HasResultsFor(*airline, body); err != nil {
 		slog.Warn("could not determine result count", "err", err)
 	} else if !hasResults {
 		slog.Warn("no flights found", "airline", doc.Airline, "origin", doc.Origin, "destination", doc.Destination)
 	}
 
 	slog.Info("scrape stored", "airline", doc.Airline, "origin", doc.Origin, "destination", doc.Destination, "bytes", len(body))
-}
-
-// hasResults dispatches to the airline-specific "did this scrape return any
-// flights" check. Unknown airlines report true (nothing to warn about).
-func hasResults(airline string, body []byte) (bool, error) {
-	switch airline {
-	case "united":
-		return airlines.HasResults(body)
-	case "american":
-		return airlines.HasResultsAmerican(body)
-	case "delta":
-		return airlines.HasResultsDelta(body)
-	case "alaska":
-		return airlines.HasResultsAlaska(body)
-	default:
-		return true, nil
-	}
 }

@@ -168,6 +168,16 @@ func process(ctx context.Context, cfg config.Config, client *mongo.Client, produ
 		return
 	}
 
+	// A scrape that stores an empty result set is still a success (a route/date
+	// with no award space legitimately returns nothing), but selector drift on
+	// the DOM extractors looks identical, so warn — it's the only in-pipeline
+	// signal that an extractor may have broken.
+	if hasResults, err := airlines.HasResultsFor(job.Airline, body); err != nil {
+		logJob.Warn("could not determine result count", "err", err)
+	} else if !hasResults {
+		logJob.Warn("scrape stored an empty result set", "reason", "empty_result")
+	}
+
 	logJob.Info("job done", "bytes", len(body))
 }
 
