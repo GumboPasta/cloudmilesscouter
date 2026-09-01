@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"cloudmilesscouter/internal/config"
+	"cloudmilesscouter/internal/mailotp"
 	"cloudmilesscouter/internal/scraper"
 	"cloudmilesscouter/internal/scraper/airlines"
 	"cloudmilesscouter/internal/storage"
@@ -21,6 +22,18 @@ func main() {
 	if len(os.Args) > 1 && os.Args[1] == "bootstrap" {
 		if err := airlines.Bootstrap(cfg.UnitedProfileDir); err != nil {
 			slog.Error("bootstrap failed", "err", err)
+			os.Exit(1)
+		}
+		return
+	}
+
+	// Same one-time device-trust setup as "bootstrap", but reads United's OTP
+	// email itself via Gmail IMAP instead of waiting for a human to type it —
+	// needs UNITED_USERNAME/UNITED_PASSWORD and GMAIL_ADDRESS/GMAIL_APP_PASSWORD.
+	if len(os.Args) > 1 && os.Args[1] == "bootstrap-auto" {
+		gmail := mailotp.Config{Address: cfg.GmailAddress, AppPassword: cfg.GmailAppPassword}
+		if err := airlines.AutoBootstrap(cfg.UnitedProfileDir, cfg.UnitedUsername, cfg.UnitedPassword, gmail); err != nil {
+			slog.Error("bootstrap-auto failed", "err", err)
 			os.Exit(1)
 		}
 		return
@@ -46,13 +59,20 @@ func main() {
 	log.Println("PostgreSQL is reachable at", cfg.PostgresURI)
 
 	fs := flag.NewFlagSet("scrape", flag.ExitOnError)
-	origin := fs.String("origin", "", `United display-string origin, e.g. "DALLAS, TX, US (ALL AIRPORTS)"`)
-	destination := fs.String("destination", "", "United display-string destination")
+	airline := fs.String("airline", "united", "airline ID to scrape (must be registered in airlines.Scrapers)")
+	origin := fs.String("origin", "", `origin IATA airport/metro code, e.g. "DFW"`)
+	destination := fs.String("destination", "", `destination IATA airport/metro code, e.g. "JFK"`)
 	date := fs.String("date", "", "departure date, YYYY-MM-DD")
 	fs.Parse(os.Args[1:])
 
 	if *origin == "" || *destination == "" || *date == "" {
-		fmt.Println(`usage: scraper -origin "..." -destination "..." -date YYYY-MM-DD`)
+		fmt.Println(`usage: scraper [-airline united] -origin DFW -destination JFK -date YYYY-MM-DD`)
+		os.Exit(1)
+	}
+
+	scrapeFn, ok := airlines.Scrapers[*airline]
+	if !ok {
+		slog.Error("no scraper registered for airline", "airline", *airline)
 		os.Exit(1)
 	}
 
@@ -62,18 +82,18 @@ func main() {
 		os.Exit(1)
 	}
 
-	body, err := airlines.Scrape(cfg.UnitedProfileDir, cfg.Headless, scraper.SearchParams{
+	body, err := scrapeFn(cfg, scraper.SearchParams{
 		Origin:      *origin,
 		Destination: *destination,
 		Date:        departDate,
-	}, cfg.UnitedPassword)
+	})
 	if err != nil {
 		slog.Error("scrape failed", "err", err)
 		os.Exit(1)
 	}
 
 	doc := storage.RawScrape{
-		Airline:     "united",
+		Airline:     *airline,
 		Origin:      *origin,
 		Destination: *destination,
 		SearchDate:  departDate,
@@ -85,11 +105,28 @@ func main() {
 		os.Exit(1)
 	}
 
-	if hasResults, err := airlines.HasResults(body); err != nil {
+	if hasResults, err := hasResults(*airline, body); err != nil {
 		slog.Warn("could not determine result count", "err", err)
 	} else if !hasResults {
 		slog.Warn("no flights found", "airline", doc.Airline, "origin", doc.Origin, "destination", doc.Destination)
 	}
 
 	slog.Info("scrape stored", "airline", doc.Airline, "origin", doc.Origin, "destination", doc.Destination, "bytes", len(body))
+}
+
+// hasResults dispatches to the airline-specific "did this scrape return any
+// flights" check. Unknown airlines report true (nothing to warn about).
+func hasResults(airline string, body []byte) (bool, error) {
+	switch airline {
+	case "united":
+		return airlines.HasResults(body)
+	case "american":
+		return airlines.HasResultsAmerican(body)
+	case "delta":
+		return airlines.HasResultsDelta(body)
+	case "alaska":
+		return airlines.HasResultsAlaska(body)
+	default:
+		return true, nil
+	}
 }

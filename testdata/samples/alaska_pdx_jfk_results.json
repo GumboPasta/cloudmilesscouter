@@ -1,0 +1,84 @@
+{
+  "_comment": "PDX->JFK one-way award search (Use points / ShoppingMethod=onlineaward), 2026-11-24, anonymous. Alaska's results page is a Svelte app with no JSON payload, so internal/scraper/airlines/alaska.go navigates the deep-link URL and extracts the DOM via page.Evaluate. The live search returned ~20 flights; this fixture keeps 5 (a nonstop, connections via SEA/SAN, and red-eyes that arrive the next day). Connecting itineraries show as 'Multiple flights' with no per-segment number. Values are real.",
+  "source": "alaskaair.com/search/results DOM extraction",
+  "route": { "origin": "PDX", "destination": "JFK" },
+  "dateText": "Tue, Nov 24th",
+  "flightCount": 5,
+  "flights": [
+    {
+      "flightNumber": "AS 18",
+      "via": [],
+      "depart": "10:46 am",
+      "arrive": "7:15 pm",
+      "durationMinutes": 329,
+      "arrivesNextDay": 0,
+      "origin": "PDX",
+      "destination": "JFK",
+      "stops": 0,
+      "fares": [
+        { "cabin": "Main", "miles": 32500, "taxUSD": 6 },
+        { "cabin": "First", "miles": 125000, "taxUSD": 6 }
+      ]
+    },
+    {
+      "flightNumber": "Multiple flights",
+      "via": ["SEA"],
+      "depart": "5:19 am",
+      "arrive": "3:30 pm",
+      "durationMinutes": 431,
+      "arrivesNextDay": 0,
+      "origin": "PDX",
+      "destination": "JFK",
+      "stops": 1,
+      "fares": [
+        { "cabin": "Main", "miles": 27500, "taxUSD": 6 },
+        { "cabin": "First", "miles": 72500, "taxUSD": 6 }
+      ]
+    },
+    {
+      "flightNumber": "Multiple flights",
+      "via": ["SAN"],
+      "depart": "9:15 am",
+      "arrive": "6:36 am",
+      "durationMinutes": 1101,
+      "arrivesNextDay": 1,
+      "origin": "PDX",
+      "destination": "JFK",
+      "stops": 1,
+      "fares": [
+        { "cabin": "Main", "miles": 27500, "taxUSD": 12 },
+        { "cabin": "First", "miles": 52500, "taxUSD": 12 }
+      ]
+    },
+    {
+      "flightNumber": "Multiple flights",
+      "via": ["SAN"],
+      "depart": "5:53 pm",
+      "arrive": "6:36 am",
+      "durationMinutes": 583,
+      "arrivesNextDay": 1,
+      "origin": "PDX",
+      "destination": "JFK",
+      "stops": 1,
+      "fares": [
+        { "cabin": "Main", "miles": 32500, "taxUSD": 6 },
+        { "cabin": "First", "miles": 52500, "taxUSD": 6 }
+      ]
+    },
+    {
+      "flightNumber": "Multiple flights",
+      "via": ["SEA"],
+      "depart": "9:25 am",
+      "arrive": "10:59 pm",
+      "durationMinutes": 634,
+      "arrivesNextDay": 0,
+      "origin": "PDX",
+      "destination": "JFK",
+      "stops": 1,
+      "fares": [
+        { "cabin": "Main", "miles": 32500, "taxUSD": 12 },
+        { "cabin": "First", "miles": 97500, "taxUSD": 12 }
+      ]
+    }
+  ]
+}

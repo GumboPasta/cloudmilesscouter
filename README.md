@@ -114,36 +114,47 @@ This project is phased intentionally. **Phases 1 and 2 have zero queue infrastru
 **✅ Definition of Done:** Triggering one search dispatches 3+ airline jobs into Kafka, workers scrape them in parallel, and all results land in MongoDB.
 
 **Step 1 — Set Up Kafka**
-- [ ] Add Kafka + Zookeeper to Docker Compose
-- [ ] Create topic: `scrape.jobs`
-- [ ] Verify Kafka boots and accepts messages
+- [x] Add Kafka + Zookeeper to Docker Compose
+- [x] Create topic: `scrape.jobs` (created on boot by a one-shot `kafka-init` service; 3 partitions, replication-factor 1)
+- [x] Verify Kafka boots and accepts messages
 
 **Step 2 — Build Job Producer**
-- [ ] Write Go code to dispatch one job per airline into Kafka topic
-- [ ] Job payload: airline ID, route, dates, cabin class
+- [x] Write Go code to dispatch one job per airline into Kafka topic
+- [x] Job payload: airline ID, route, dates, cabin class
 
 **Step 3 — Build Worker Pool**
-- [ ] Write Go worker pool (5–10 concurrent workers)
-- [ ] Each worker pulls a job from Kafka
-- [ ] Each worker spawns a Playwright browser instance
-- [ ] Worker scrapes airline, stores raw result in MongoDB
-- [ ] Worker acknowledges job completion back to Kafka
+- [x] Write Go worker pool (5–10 concurrent workers)
+- [x] Each worker pulls a job from Kafka
+- [x] Each worker spawns a Playwright browser instance
+- [x] Worker scrapes airline, stores raw result in MongoDB
+- [x] Worker acknowledges job completion back to Kafka
 
 **Step 4 — Add More Airlines**
-- [ ] Add American Airlines parser
-- [ ] Add Delta Airlines parser
-- [ ] Add Air Canada parser
-- [ ] Test all three running in parallel via worker pool
+- [x] Add American Airlines parser — anonymous award search, reads the `ng-state` SSR JSON from aa.com; scraper `internal/scraper/airlines/american.go`, parser `internal/etl/parsers/american.go`
+- [x] Add Delta Airlines parser — anonymous "Shop with Miles" search; results page has no JSON, so the scraper extracts the DOM in-browser (`internal/scraper/airlines/delta.go`), parser `internal/etl/parsers/delta.go`
+- [x] ~~Add Air Canada parser~~ — Aeroplan award search requires a login (no anonymous access), so swapped for **Alaska Airlines**: anonymous "Use points" search via a deep-link URL, DOM extraction, and it runs headless. Scraper `internal/scraper/airlines/alaska.go`, parser `internal/etl/parsers/alaska.go`. Air Canada deferred to Phase 7.
+- [x] Test all four running in parallel via worker pool — one `producer` search fans out to 4 jobs; the worker pool scrapes American, Delta and Alaska concurrently and all land in MongoDB → ETL → PostgreSQL. (United's login expired mid-Phase 3 — see the note below Step 6 for the fix and why United needs a login at all, unlike the other three.)
 
 **Step 5 — Add Circuit Breakers & Retry Logic**
-- [ ] If airline site is down, fail gracefully
-- [ ] Re-queue failed jobs with exponential backoff
-- [ ] Log failure reason with structured logging
+- [x] If airline site is down, fail gracefully — in-memory per-airline circuit breaker (`internal/breaker`): after 3 consecutive failures for an airline, its jobs are deferred for a 60s cooldown instead of launching a browser
+- [x] Re-queue failed jobs with exponential backoff — worker re-enqueues a failed scrape/store with an incremented `attempt` after `RETRY_BACKOFF_BASE` × 2ⁿ (capped 30s), up to `MAX_SCRAPE_ATTEMPTS` (3) tries, then drops it with a "giving up" log. Kafka dead-letter topic deferred to Phase 6.
+- [x] Log failure reason with structured logging — every failure/re-queue line carries a coarse `reason` (`timeout`, `blocked`, `browser`, `store`, `circuit_open`, `other`) via `slog`
 
 **Step 6 — Test & Validate**
-- [ ] Trigger a search and verify all airlines scraped in parallel
-- [ ] Verify all results land in MongoDB
-- [ ] Simulate a scraper failure and verify retry works
+- [x] Trigger a search and verify all airlines scraped in parallel — one `producer -origin BOS -destination SFO -date 2026-12-20` fans out to 4 jobs; the 5-worker pool scrapes **all four** (United, American, Delta, Alaska) concurrently — `scrape started` for all within 3s, all `scrape succeeded` in 5–16s.
+- [x] Verify all results land in MongoDB — all four wrote `data.flight_scrapes` docs (United ~65 KB, American ~716 KB, Delta ~8 KB, Alaska ~3 KB) with airline / route / `search_date` / `scraped_at` metadata.
+- [x] Simulate a scraper failure and verify retry works — with United's login expired, its scrape timed out (30s Playwright); the worker re-queued it with an incremented `attempt` after exponential backoff (2s → 4s), gave up after `MAX_SCRAPE_ATTEMPTS` (3) with a structured `giving up` log, and the per-airline circuit breaker opened for a 60s cooldown — later United jobs deferred with `reason=circuit_open` without launching a browser. (United was subsequently fixed via `bootstrap-auto` — see the note below.)
+
+> **United's expired login, and why it needs one at all:** unlike American/Delta/Alaska, United only shows award (miles) pricing to a signed-in MileagePlus account — confirmed live: an anonymous search prompts "You must be signed-in to see flight results with miles." Once a device is trusted, re-auth is password-only (no OTP) via `ensureLoggedIn`, so the only human-in-the-loop step is establishing that trust once. `scraper bootstrap-auto` (`internal/scraper/airlines/united.go`, `internal/mailotp`) does that setup end to end with no one at the browser: it fills the MileagePlus number/password and, when United emails a verification code, reads it via IMAP instead of waiting on stdin. `scraper bootstrap` (manual, stdin-driven) still exists as a fallback. United's login is a modal off a search page (the old `/mileageplus/login` URL 404s now, and the modal container has no `role="dialog"` — it's `.atm-c-modal__body`); the flow — optional "Continue shopping?" interstitial → email-first *or* remembered-password step → optional OTP — and the field ids (`#password`, `#MPIDEmailField`) were reverse-engineered live. Each step is submitted by pressing Enter in the field (implicit form submission) rather than hunting for the buttons, which have no stable id and re-render on input. The **OTP step's markup is still unverified** (it sits behind a password submit). `bootstrap-auto` runs a 3-minute loop — trigger the search, then handle whichever appears first, the sign-in modal or the `FetchFlights` payload — and on failure logs a screenshot plus a dump of the page's form controls so a fix lands in one iteration. **Verified working:** a run fills the password, presses Enter, hits no OTP (device trusted from a prior login), and confirms miles authorization by pulling a ~1.9 MB `FetchFlights` payload — then United scrapes clean alongside the other three in the worker pool.
+>
+> MileagePlus only offers email or SMS for its second factor (no third-party authenticator app support, confirmed — [travelersunited.org](https://www.travelersunited.org/two-factor-authentication-too-much-for-uniteds-best-customers/)), so `bootstrap-auto` needs read access to *an* inbox. To avoid handing the scraper a credential for the real inbox, it's pointed at a **dedicated throwaway Gmail account** instead:
+> 1. Create a new Gmail account used for nothing else.
+> 2. On the *real* account (the one on the MileagePlus login), Settings → Forwarding and POP/IMAP → add the throwaway address as a forwarding address, confirm it via the code Gmail sends there.
+> 3. Add a filter on the real account: `from:(united.com)` → Forward it to the throwaway address.
+> 4. On the throwaway account, turn on 2-Step Verification, then generate an App Password (myaccount.google.com/apppasswords).
+> 5. Set `.env`'s `GMAIL_ADDRESS` / `GMAIL_APP_PASSWORD` to the throwaway account's address and that App Password.
+>
+> The throwaway inbox then holds nothing but forwarded United mail — if its App Password ever leaked, the blast radius is United OTP codes with a ~90s validity window, not the real inbox.
 
 ---
 
@@ -307,6 +318,10 @@ cloudmilesscouter/
 │   ├── queue/
 │   │   ├── producer.go
 │   │   └── consumer.go
+│   ├── breaker/
+│   │   └── breaker.go
+│   ├── mailotp/
+│   │   └── imap.go
 │   ├── api/
 │   │   ├── router.go
 │   │   └── handlers/

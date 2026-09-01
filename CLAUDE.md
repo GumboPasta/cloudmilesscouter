@@ -4,15 +4,15 @@
 Airline award flight scraper. Scrapes loyalty program websites, stores raw data in MongoDB, normalizes into PostgreSQL, exposes via Go REST API, React frontend on Vercel.
 
 ## Current Phase
-**Phase 1 — Foundation & First Scraper**
-Working on: United Airlines scraper → MongoDB storage
+**Phase 3 — Queue & Worker Pool**
+Working on: Kafka job queue + parallel worker pool for concurrent multi-airline scraping
 
 ## Tech Stack
 - Language: Go
 - Browser automation: Playwright (`playwright-go`)
 - Raw storage: MongoDB
 - Structured storage: PostgreSQL
-- Queue: Kafka (Phase 3+, not yet)
+- Queue: Kafka (Phase 3 — in progress)
 - Cache: Redis (Phase 4+, not yet)
 - API: Go + Chi Router
 - Frontend: React + TypeScript + Tailwind + Vercel
@@ -32,6 +32,8 @@ cloudmilesscouter/
 │   ├── storage/postgres.go
 │   ├── queue/producer.go
 │   ├── queue/consumer.go
+│   ├── breaker/breaker.go
+│   ├── mailotp/imap.go
 │   ├── api/router.go
 │   ├── api/handlers/search.go
 │   └── config/config.go

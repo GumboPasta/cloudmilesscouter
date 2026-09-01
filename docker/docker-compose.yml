@@ -36,7 +36,63 @@ services:
       - ./pgadmin/servers.json:/pgadmin4/servers.json:ro
       - ./pgadmin/pgpass:/pgpass:ro
 
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.7.1
+    restart: unless-stopped
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    volumes:
+      - zookeeper-data:/var/lib/zookeeper/data
+      - zookeeper-log:/var/lib/zookeeper/log
+
+  kafka:
+    image: confluentinc/cp-kafka:7.7.1
+    restart: unless-stopped
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      # Two listeners: PLAINTEXT for clients inside the compose network
+      # (kafka:29092), PLAINTEXT_HOST for clients on the host (localhost:9092).
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:29092,PLAINTEXT_HOST://0.0.0.0:9092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      # The kafka-init container is the single source of truth for topics.
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+
+  # One-shot: creates the scrape.jobs topic once the broker is healthy, then exits.
+  kafka-init:
+    image: confluentinc/cp-kafka:7.7.1
+    restart: "no"
+    depends_on:
+      kafka:
+        condition: service_healthy
+    command: >
+      kafka-topics --bootstrap-server kafka:29092
+      --create --if-not-exists
+      --topic scrape.jobs
+      --partitions 3
+      --replication-factor 1
+
 volumes:
   mongo-data:
   postgres-data:
   pgadmin-data:
+  zookeeper-data:
+  zookeeper-log:
+  kafka-data:

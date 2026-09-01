@@ -1,0 +1,99 @@
+{
+  "_comment": "DFW->JFK one-way award search (Shop with Miles), 2026-11-22, anonymous (not logged in). Delta's results page has no JSON payload — the flight/fare data is only in the server-rendered DOM — so internal/scraper/airlines/delta.go extracts it in-browser via page.Evaluate and stores this shape. The live search returned 19 flights; this fixture keeps 6 (nonstop, connections via DTW/ATL, a DAL-origin 'nearby airport' result, and a red-eye that arrives the next day). Values are real.",
+  "source": "delta.com/flightsearch/search-results DOM extraction",
+  "route": { "origin": "DFW", "destination": "JFK" },
+  "dateText": "Sun, Nov 22, 2026",
+  "flightCount": 6,
+  "flights": [
+    {
+      "flightNumbers": ["DL454"],
+      "depart": "7:35 am",
+      "arrive": "12:04 pm",
+      "origin": "DFW",
+      "destination": "JFK",
+      "connectingCodes": [],
+      "stops": 0,
+      "durationMinutes": 209,
+      "fares": [
+        { "cabin": "Main", "available": true, "miles": 22600, "taxUSD": 6 },
+        { "cabin": "Comfort", "available": true, "miles": 30600, "taxUSD": 6 },
+        { "cabin": "First", "available": true, "miles": 135200, "taxUSD": 6 }
+      ]
+    },
+    {
+      "flightNumbers": ["DL2183", "DL2751"],
+      "depart": "5:10 am",
+      "arrive": "11:57 am",
+      "origin": "DFW",
+      "destination": "JFK",
+      "connectingCodes": ["DTW"],
+      "stops": 1,
+      "durationMinutes": 347,
+      "fares": [
+        { "cabin": "Main", "available": true, "miles": 37400, "taxUSD": 6 },
+        { "cabin": "Comfort", "available": true, "miles": 43500, "taxUSD": 6 },
+        { "cabin": "First", "available": true, "miles": 135200, "taxUSD": 6 }
+      ]
+    },
+    {
+      "flightNumbers": ["DL516", "DL2380"],
+      "depart": "6:06 am",
+      "arrive": "1:44 pm",
+      "origin": "DAL",
+      "destination": "JFK",
+      "connectingCodes": ["ATL"],
+      "stops": 1,
+      "durationMinutes": 398,
+      "fares": [
+        { "cabin": "Main", "available": true, "miles": 37400, "taxUSD": 6 },
+        { "cabin": "Comfort", "available": true, "miles": 41200, "taxUSD": 6 },
+        { "cabin": "First", "available": true, "miles": 77900, "taxUSD": 6 }
+      ]
+    },
+    {
+      "flightNumbers": ["DL2143", "DL2386"],
+      "depart": "5:20 pm",
+      "arrive": "12:59 am",
+      "origin": "DFW",
+      "destination": "JFK",
+      "connectingCodes": ["ATL"],
+      "stops": 1,
+      "durationMinutes": 399,
+      "fares": [
+        { "cabin": "Main", "available": true, "miles": 57900, "taxUSD": 6 },
+        { "cabin": "Comfort", "available": true, "miles": 61600, "taxUSD": 6 },
+        { "cabin": "First", "available": true, "miles": 77900, "taxUSD": 6 }
+      ]
+    },
+    {
+      "flightNumbers": ["DL512", "DL2771"],
+      "depart": "4:11 pm",
+      "arrive": "10:20 pm",
+      "origin": "DAL",
+      "destination": "JFK",
+      "connectingCodes": ["ATL"],
+      "stops": 1,
+      "durationMinutes": 309,
+      "fares": [
+        { "cabin": "Main", "available": true, "miles": 73700, "taxUSD": 6 },
+        { "cabin": "Comfort", "available": true, "miles": 77400, "taxUSD": 6 },
+        { "cabin": "First", "available": true, "miles": 93700, "taxUSD": 6 }
+      ]
+    },
+    {
+      "flightNumbers": ["DL735", "DL1316"],
+      "depart": "1:52 pm",
+      "arrive": "9:59 pm",
+      "origin": "DFW",
+      "destination": "JFK",
+      "connectingCodes": ["DTW"],
+      "stops": 1,
+      "durationMinutes": 427,
+      "fares": [
+        { "cabin": "Main", "available": true, "miles": 96000, "taxUSD": 6 },
+        { "cabin": "Comfort", "available": true, "miles": 102600, "taxUSD": 6 },
+        { "cabin": "First", "available": true, "miles": 116500, "taxUSD": 6 }
+      ]
+    }
+  ]
+}

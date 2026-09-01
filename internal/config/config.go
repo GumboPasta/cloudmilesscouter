@@ -2,32 +2,74 @@ package config
 
 import (
 	"os"
+	"strconv"
 	"strings"
+	"time"
 )
 
 type Config struct {
-	MongoURI         string
-	PostgresURI      string
-	UnitedProfileDir string
-	UnitedPassword   string
-	Headless         bool
+	MongoURI           string
+	PostgresURI        string
+	UnitedProfileDir   string
+	UnitedUsername     string
+	UnitedPassword     string
+	GmailAddress       string // for AutoBootstrap: inbox to poll for United's OTP email
+	GmailAppPassword   string // Gmail App Password — myaccount.google.com/apppasswords, NOT the account password
+	AmericanProfileDir string
+	DeltaProfileDir    string
+	AlaskaProfileDir   string
+	Headless           bool
+	KafkaBrokers       string
+	KafkaGroupID       string
+	WorkerCount        int
+	MaxAttempts        int           // total scrape tries per job before it is dropped
+	RetryBackoffBase   time.Duration // first retry waits this long; doubles each attempt (capped in the worker)
 }
 
 func Load() Config {
 	loadDotEnv(".env")
 
 	return Config{
-		MongoURI:         getEnv("MONGO_URI", "mongodb://localhost:27017"),
-		PostgresURI:      getEnv("POSTGRES_URI", "postgres://cloudmilesscouter:cloudmilesscouter@localhost:5432/cloudmilesscouter?sslmode=disable"),
-		UnitedProfileDir: getEnv("UNITED_PROFILE_DIR", ".united-profile"),
-		UnitedPassword:   getEnv("UNITED_PASSWORD", ""),
-		Headless:         getEnv("HEADLESS", "false") == "true",
+		MongoURI:           getEnv("MONGO_URI", "mongodb://localhost:27017"),
+		PostgresURI:        getEnv("POSTGRES_URI", "postgres://cloudmilesscouter:cloudmilesscouter@localhost:5432/cloudmilesscouter?sslmode=disable"),
+		UnitedProfileDir:   getEnv("UNITED_PROFILE_DIR", ".united-profile"),
+		UnitedUsername:     getEnv("UNITED_USERNAME", ""),
+		UnitedPassword:     getEnv("UNITED_PASSWORD", ""),
+		GmailAddress:       getEnv("GMAIL_ADDRESS", ""),
+		GmailAppPassword:   getEnv("GMAIL_APP_PASSWORD", ""),
+		AmericanProfileDir: getEnv("AMERICAN_PROFILE_DIR", ".american-profile"),
+		DeltaProfileDir:    getEnv("DELTA_PROFILE_DIR", ".delta-profile"),
+		AlaskaProfileDir:   getEnv("ALASKA_PROFILE_DIR", ".alaska-profile"),
+		Headless:           getEnv("HEADLESS", "false") == "true",
+		KafkaBrokers:       getEnv("KAFKA_BROKERS", "localhost:9092"),
+		KafkaGroupID:       getEnv("KAFKA_GROUP_ID", "scrape-workers"),
+		WorkerCount:        getEnvInt("WORKER_COUNT", 5),
+		MaxAttempts:        getEnvInt("MAX_SCRAPE_ATTEMPTS", 3),
+		RetryBackoffBase:   getEnvDuration("RETRY_BACKOFF_BASE", 2*time.Second),
 	}
 }
 
 func getEnv(key, fallback string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
+	}
+	return fallback
+}
+
+func getEnvInt(key string, fallback int) int {
+	if v := os.Getenv(key); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			return n
+		}
+	}
+	return fallback
+}
+
+func getEnvDuration(key string, fallback time.Duration) time.Duration {
+	if v := os.Getenv(key); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			return d
+		}
 	}
 	return fallback
 }
