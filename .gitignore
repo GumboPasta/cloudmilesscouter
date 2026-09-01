@@ -1,6 +1,11 @@
 # Build artifacts
 /bin/
 cloudmilesscouter
+# bare `go build ./cmd/...` drops these in the repo root
+/scraper
+/producer
+/worker
+/etl
 
 # Secrets
 .env
