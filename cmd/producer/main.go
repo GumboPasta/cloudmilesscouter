@@ -35,7 +35,16 @@ func main() {
 
 	airlines := defaultAirlines
 	if *airlinesCSV != "" {
-		airlines = strings.Split(*airlinesCSV, ",")
+		airlines = nil
+		for _, a := range strings.Split(*airlinesCSV, ",") {
+			if a = strings.TrimSpace(a); a != "" {
+				airlines = append(airlines, a)
+			}
+		}
+	}
+	if len(airlines) == 0 {
+		slog.Error("no airlines to dispatch", "airlines", *airlinesCSV)
+		os.Exit(1)
 	}
 
 	if _, err := time.Parse("2006-01-02", *date); err != nil {
