@@ -74,9 +74,11 @@ func main() {
 	slog.Info("worker pool started", "workers", cfg.WorkerCount, "brokers", cfg.KafkaBrokers,
 		"group", cfg.KafkaGroupID, "max_attempts", cfg.MaxAttempts, "retry_backoff_base", cfg.RetryBackoffBase.String())
 
-	// One fetch loop feeds a buffered channel that the workers drain. The buffer
-	// lets the loop stay a step ahead without pulling more than the pool can hold.
-	jobs := make(chan kafka.Message, cfg.WorkerCount)
+	// One fetch loop feeds an unbuffered channel that the workers drain. The loop
+	// blocks on the handoff until a worker is free, so it stays exactly in step
+	// with the pool and never commits more jobs than the pool can hold. Kafka
+	// keeps the unfetched messages.
+	jobs := make(chan kafka.Message)
 
 	var wg sync.WaitGroup
 	for i := 0; i < cfg.WorkerCount; i++ {
@@ -115,6 +117,13 @@ func main() {
 }
 
 func process(ctx context.Context, cfg config.Config, client *mongo.Client, producer *queue.Producer, brk *breaker.Breaker, workerID int, msg kafka.Message) {
+	// Shutting down: the message is already committed (at-most-once), so there is
+	// nothing to release — just don't start a fresh scrape. The producer
+	// re-dispatches the search on its next cadence.
+	if ctx.Err() != nil {
+		return
+	}
+
 	job, err := queue.Decode(msg)
 	if err != nil {
 		slog.Error("undecodable job, skipping", "worker", workerID, "err", err, "raw", string(msg.Value))
