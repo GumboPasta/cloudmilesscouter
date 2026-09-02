@@ -33,7 +33,7 @@ type Producer struct {
 func NewProducer(brokers string) *Producer {
 	return &Producer{
 		w: &kafka.Writer{
-			Addr:         kafka.TCP(brokers),
+			Addr:         kafka.TCP(splitBrokers(brokers)...),
 			Topic:        Topic,
 			Balancer:     &kafka.Hash{},
 			RequiredAcks: kafka.RequireAll,
