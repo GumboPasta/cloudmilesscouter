@@ -41,6 +41,11 @@ import (
 // maxBackoff caps the exponential retry backoff regardless of attempt count.
 const maxBackoff = 30 * time.Second
 
+// ioTimeout is a safety ceiling on the Mongo store and the retry re-enqueue so a
+// wedged Mongo or Kafka cannot pin a worker goroutine forever. It is deliberately
+// not a config field — a hang bound, not a tunable.
+const ioTimeout = 10 * time.Second
+
 func main() {
 	cfg := config.Load()
 
@@ -166,7 +171,14 @@ func process(ctx context.Context, cfg config.Config, client *mongo.Client, produ
 		ScrapedAt:   time.Now(),
 		RawPayload:  string(body),
 	}
-	if err := storage.StoreRawScrape(context.Background(), client, doc); err != nil {
+	// context.Background(), not the worker ctx: on SIGTERM the worker ctx would
+	// abort a store the scraper just spent 30-45s of browser time producing. The
+	// 10s bound guards against a genuine Mongo hang without letting shutdown race
+	// the write away.
+	storeCtx, cancel := context.WithTimeout(context.Background(), ioTimeout)
+	err = storage.StoreRawScrape(storeCtx, client, doc)
+	cancel()
+	if err != nil {
 		logJob.Error("store failed", "err", err, "reason", "store")
 		retry(ctx, cfg, producer, logJob, job, "store")
 		return
@@ -206,7 +218,12 @@ func retry(ctx context.Context, cfg config.Config, producer *queue.Producer, log
 	}
 
 	job.Attempt = next
-	if err := producer.Enqueue(context.Background(), job); err != nil {
+	// context.Background() with a 10s ceiling, same rationale as the store: let
+	// the re-enqueue finish through shutdown, but don't let a Kafka outage park
+	// the worker here indefinitely. A timeout drops the job (at-most-once).
+	enqueueCtx, cancel := context.WithTimeout(context.Background(), ioTimeout)
+	defer cancel()
+	if err := producer.Enqueue(enqueueCtx, job); err != nil {
 		logJob.Error("re-queue failed, job dropped", "err", err)
 	}
 }
