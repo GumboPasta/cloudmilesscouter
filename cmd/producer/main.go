@@ -25,18 +25,26 @@ func main() {
 	origin := fs.String("origin", "", `origin IATA airport/metro code, e.g. "DFW"`)
 	destination := fs.String("destination", "", `destination IATA airport/metro code, e.g. "JFK"`)
 	date := fs.String("date", "", "departure date, YYYY-MM-DD")
-	cabin := fs.String("cabin", "economy", "cabin class: economy, business, first")
 	airlinesCSV := fs.String("airlines", "", "comma-separated airline IDs to dispatch (default: all)")
 	fs.Parse(os.Args[1:])
 
 	if *origin == "" || *destination == "" || *date == "" {
-		fmt.Println(`usage: producer -origin DFW -destination JFK -date YYYY-MM-DD [-cabin economy] [-airlines a,b,c]`)
+		fmt.Println(`usage: producer -origin DFW -destination JFK -date YYYY-MM-DD [-airlines a,b,c]`)
 		os.Exit(1)
 	}
 
 	airlines := defaultAirlines
 	if *airlinesCSV != "" {
-		airlines = strings.Split(*airlinesCSV, ",")
+		airlines = nil
+		for _, a := range strings.Split(*airlinesCSV, ",") {
+			if a = strings.TrimSpace(a); a != "" {
+				airlines = append(airlines, a)
+			}
+		}
+	}
+	if len(airlines) == 0 {
+		slog.Error("no airlines to dispatch", "airlines", *airlinesCSV)
+		os.Exit(1)
 	}
 
 	if _, err := time.Parse("2006-01-02", *date); err != nil {
@@ -54,7 +62,6 @@ func main() {
 			Origin:      *origin,
 			Destination: *destination,
 			Date:        *date,
-			Cabin:       *cabin,
 		}
 		if err := p.Enqueue(context.Background(), job); err != nil {
 			slog.Error("dispatch failed", "airline", airline, "err", err)
@@ -67,5 +74,5 @@ func main() {
 		os.Exit(1)
 	}
 
-	slog.Info("all jobs dispatched", "count", len(airlines), "origin", *origin, "destination", *destination, "date", *date, "cabin", *cabin)
+	slog.Info("all jobs dispatched", "count", len(airlines), "origin", *origin, "destination", *destination, "date", *date)
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"time"
 
 	"github.com/segmentio/kafka-go"
 )
@@ -12,14 +13,13 @@ import (
 // on boot by the kafka-init service in docker/docker-compose.yml.
 const Topic = "scrape.jobs"
 
-// ScrapeJob is one airline's worth of work: scrape this route, on this date,
-// in this cabin. One search fans out into one ScrapeJob per airline.
+// ScrapeJob is one airline's worth of work: scrape this route, on this date.
+// One search fans out into one ScrapeJob per airline.
 type ScrapeJob struct {
 	Airline     string `json:"airline"`           // airline ID, e.g. "united"
 	Origin      string `json:"origin"`            // IATA airport or metro code, e.g. "DFW", "NYC"
 	Destination string `json:"destination"`       // IATA airport or metro code, e.g. "JFK"
 	Date        string `json:"date"`              // departure date, YYYY-MM-DD
-	Cabin       string `json:"cabin"`             // e.g. "economy", "business"
 	Attempt     int    `json:"attempt,omitempty"` // 0 on first dispatch, +1 each time a worker re-queues it after a failure
 }
 
@@ -34,10 +34,15 @@ type Producer struct {
 func NewProducer(brokers string) *Producer {
 	return &Producer{
 		w: &kafka.Writer{
-			Addr:         kafka.TCP(brokers),
+			Addr:         kafka.TCP(splitBrokers(brokers)...),
 			Topic:        Topic,
 			Balancer:     &kafka.Hash{},
 			RequiredAcks: kafka.RequireAll,
+			// Each Enqueue is its own synchronous WriteMessages call, so the
+			// writer's default 1s BatchTimeout added ~1s of latency per job — a
+			// four-airline dispatch took ~4s. The jobs are tiny and dispatch is
+			// low-volume; flush almost immediately.
+			BatchTimeout: 50 * time.Millisecond,
 		},
 	}
 }
@@ -54,7 +59,7 @@ func (p *Producer) Enqueue(ctx context.Context, job ScrapeJob) error {
 	}); err != nil {
 		return err
 	}
-	slog.Info("job dispatched", "airline", job.Airline, "origin", job.Origin, "destination", job.Destination, "date", job.Date, "cabin", job.Cabin, "attempt", job.Attempt)
+	slog.Info("job dispatched", "airline", job.Airline, "origin", job.Origin, "destination", job.Destination, "date", job.Date, "attempt", job.Attempt)
 	return nil
 }
 

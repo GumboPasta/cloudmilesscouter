@@ -27,3 +27,22 @@ var Scrapers = map[string]ScrapeFunc{
 		return ScrapeAlaska(cfg.AlaskaProfileDir, cfg.Headless, params)
 	},
 }
+
+// HasResultsFor dispatches to the airline-specific "did this scrape return any
+// flights" check. Every airline returns HTTP 200 with an empty result set for a
+// route/date with no award space — valid data, not a failure — so callers log
+// it rather than error. An unknown airline reports true (nothing to warn about).
+func HasResultsFor(airline string, body []byte) (bool, error) {
+	switch airline {
+	case "united":
+		return HasResults(body)
+	case "american":
+		return HasResultsAmerican(body)
+	case "delta":
+		return HasResultsDelta(body)
+	case "alaska":
+		return HasResultsAlaska(body)
+	default:
+		return true, nil
+	}
+}

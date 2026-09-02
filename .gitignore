@@ -1,6 +1,11 @@
 # Build artifacts
 /bin/
 cloudmilesscouter
+# bare `go build ./cmd/...` drops these in the repo root
+/scraper
+/producer
+/worker
+/etl
 
 # Secrets
 .env
@@ -21,3 +26,7 @@ docker/pgadmin/pgpass
 
 # Debug screenshots dropped by scraper bootstrap on failure
 *-bootstrap-failure.png
+
+# Local pre-Phase-4 audit notes, not part of the project
+AnalysisPlan.md
+AnalysisReport.md

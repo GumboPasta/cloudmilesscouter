@@ -115,9 +115,20 @@ func ensureLoggedIn(page playwright.Page, password string) error {
 	pw := page.Locator(`#password`).First()
 	if err := pw.WaitFor(playwright.LocatorWaitForOptions{
 		State:   playwright.WaitForSelectorStateVisible,
-		Timeout: playwright.Float(6000),
+		Timeout: playwright.Float(8000),
 	}); err != nil {
-		return nil // no password prompt shown, session still valid
+		// No remembered-password prompt. Usually the session is still good and
+		// this is a no-op — but if United is showing the "sign in to see miles
+		// pricing" gate, the device trust lapsed entirely and only
+		// `bootstrap-auto` (email + emailed code) can restore it. Surface that
+		// instead of failing later on a non-OK FetchFlights.
+		gate := page.GetByText(regexp.MustCompile(`(?i)signed-in to see flight results with miles`))
+		if n, _ := gate.Count(); n > 0 {
+			if vis, _ := gate.First().IsVisible(); vis {
+				return errors.New("United miles sign-in gate is up but no password prompt appeared — the profile needs `scraper bootstrap-auto`")
+			}
+		}
+		return nil
 	}
 
 	if password == "" {
@@ -432,9 +443,12 @@ func firstVisible(candidates []playwright.Locator, timeout time.Duration) (playw
 func describeForms(page playwright.Page) string {
 	const js = `() => {
 		const vis = el => !!(el.offsetWidth || el.offsetHeight);
+		// No el.value: a filled #password / #MPIDEmailField would otherwise put the
+		// typed MileagePlus password or username straight into the failure log.
+		// United's real buttons are <button> elements, so el.innerText covers them.
 		const desc = el => [el.tagName, el.type||'', el.id||'', el.name||'',
 			el.getAttribute('aria-label')||'', el.placeholder||'',
-			(el.innerText||el.value||'').trim().slice(0,30)]
+			(el.innerText||'').trim().slice(0,30)]
 			.filter(Boolean).join('|');
 		return [...document.querySelectorAll('input,button,a[role="button"]')]
 			.filter(vis).map(desc).join('  //  ');

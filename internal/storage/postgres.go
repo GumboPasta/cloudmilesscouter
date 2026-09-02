@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
@@ -37,12 +38,27 @@ type NormalizedAward struct {
 	TaxesFees                       float64
 }
 
+// RawScrapeKey identifies one searched route+date for one airline program,
+// using the same lowercase program name as RawScrape.Airline and the
+// airlines.code column ("united", "delta", ...).
+type RawScrapeKey struct {
+	AirlineCode         string
+	Origin, Destination string
+	SearchDate          time.Time
+}
+
 // WriteAwards upserts the airline/route/cabin dimensions and replaces the
 // awards rows for every (airline, route, search_date) present in awards,
 // so re-running the ETL for the same search updates it cleanly instead of
 // piling up duplicates.
-func WriteAwards(ctx context.Context, db *sql.DB, awards []NormalizedAward) error {
-	if len(awards) == 0 {
+//
+// clearKeys is the set of (airline, route, search_date) the ETL parsed this
+// run, including docs that yielded zero award rows (selector drift on a DOM
+// extractor returns an empty result that still parses as a success). Every
+// clear key's stale rows are deleted before the inserts, so an empty scrape
+// clears last run's prices instead of leaving them to be served as current.
+func WriteAwards(ctx context.Context, db *sql.DB, awards []NormalizedAward, clearKeys []RawScrapeKey) error {
+	if len(awards) == 0 && len(clearKeys) == 0 {
 		return nil
 	}
 
@@ -57,6 +73,42 @@ func WriteAwards(ctx context.Context, db *sql.DB, awards []NormalizedAward) erro
 		searchDate         time.Time
 	}
 	deleted := make(map[searchKey]bool)
+
+	// Clear stale rows for every parsed key first. Stale rows can only exist if
+	// a previous run inserted them, which means the airline and route rows are
+	// already present; if they are not, there is nothing to clear, so a missing
+	// dimension row is not an error here (no name is available to upsert one for
+	// a zero-award key anyway). A key that also has award rows below is deleted
+	// once, here, and skipped by the insert loop via the shared deleted map.
+	for _, k := range clearKeys {
+		var airlineID int
+		err := tx.QueryRowContext(ctx, `SELECT id FROM airlines WHERE code = $1`, k.AirlineCode).Scan(&airlineID)
+		if errors.Is(err, sql.ErrNoRows) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+
+		var routeID int
+		err = tx.QueryRowContext(ctx, `SELECT id FROM routes WHERE origin = $1 AND destination = $2`, k.Origin, k.Destination).Scan(&routeID)
+		if errors.Is(err, sql.ErrNoRows) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+
+		key := searchKey{airlineID, routeID, k.SearchDate}
+		if !deleted[key] {
+			if _, err := tx.ExecContext(ctx, `
+				DELETE FROM awards WHERE airline_id = $1 AND route_id = $2 AND search_date = $3`,
+				airlineID, routeID, k.SearchDate); err != nil {
+				return err
+			}
+			deleted[key] = true
+		}
+	}
 
 	for _, a := range awards {
 		var airlineID int

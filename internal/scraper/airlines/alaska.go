@@ -14,7 +14,7 @@ import (
 
 const (
 	alaskaResultsBase = "https://www.alaskaair.com/search/results"
-	alaskaCardWait    = 45 * time.Second
+	alaskaResultsWait = 25 * time.Second
 	alaskaCardSel     = ".flight-card-content"
 )
 
@@ -55,17 +55,33 @@ const AlaskaExtractJS = `() => {
     const dur = clean(q('.duration') && q('.duration').textContent);
     const dm = dur.match(/(\d+)h(?:\s*(\d+)m)?/);
     const nd = clean(q('.duration-next-day') && q('.duration-next-day').textContent).match(/\+(\d+)\s*day/);
-    const stopText = clean(q('.relative') && q('.relative').textContent);
-    const via = (stopText.match(/[A-Z]{3}/g) || []);
-    const stops = /nonstop/i.test(stopText) ? 0 : (via.length || 1);
+    // Stop count comes from the details section's data-testid
+    // ("flight-details-<i>-stops-<n>"); the connection airport(s) come from the
+    // path widget's text ("PDX 8h 2m"), found by its aria-label rather than a
+    // utility class. Fall back to parsing the path text if the testid is gone.
+    const stopsEl = q('[data-testid*="-stops-"]');
+    const stopsTid = stopsEl ? (stopsEl.getAttribute('data-testid') || '') : '';
+    const pathEl = q('[aria-label*="flight path"], [aria-label*="Flight path"]');
+    const stopText = clean(pathEl && pathEl.textContent);
+    const via = (stopText.match(/\b[A-Z]{3}\b/g) || []);
+    const stopM = stopsTid.match(/-stops-(\d+)/);
+    const stops = stopM ? +stopM[1] : (/nonstop/i.test(stopText) ? 0 : (via.length || 1));
     const airportCodes = qa('.airport-code').map(e => clean(e.textContent));
+    // A fare is a <button> whose text carries both a points amount and a $
+    // tax — version-agnostic (the tile component has been "fare-tile",
+    // "valuetile" and "fare-tile-v2" across redesigns; the anonymous and
+    // signed-in pages don't always render the same one). Cabin comes from the
+    // "fare-tile--<cabin>" modifier class when present, else the leading word.
     const fares = qa('button')
-      .map(b => clean(b.textContent))
-      .filter(t => /points/i.test(t) && t.length < 90)
-      .map(t => {
-        const cabin = (t.match(/^(Saver|Main|First|Business)/i) || ['', 'Main'])[1];
+      .filter(b => /\bpoints\b/i.test(b.textContent) && /\$\s?\d/.test(b.textContent))
+      .map(b => {
+        const t = clean(b.textContent);
+        const clsCabin = (String(b.className).match(/fare-tile--([a-z]+)/i) || [])[1];
+        const cabin = clsCabin
+          ? clsCabin[0].toUpperCase() + clsCabin.slice(1)
+          : (t.match(/\b(Saver|Main|First|Business)\b/i) || ['', 'Main'])[1];
         const pts = t.match(/([\d,.]+)\s*k?\s*points/i);
-        const tax = t.match(/\+\s*\$([\d,.]+)/);
+        const tax = t.match(/\+\s*\$\s?([\d,.]+)/);
         let miles = 0;
         if (pts) {
           miles = parseFloat(pts[1].replace(/,/g, ''));
@@ -115,14 +131,36 @@ func ScrapeAlaska(profileDir string, headless bool, params scraper.SearchParams)
 		return fail(err)
 	}
 
+	// A normal search renders flight cards within a few seconds. A route/date
+	// with no award space renders none — and so does a page that stalled or got
+	// walled. Wait for a card to become visible; on a timeout, give the DOM a
+	// few more seconds and hand off to the extractor regardless. AlaskaExtractJS
+	// returns {"flights":[]} when there are no cards, which the worker stores as
+	// a valid empty result — and its HasResults check then warns, the signal
+	// that a selector may have drifted.
+	//
+	// (Do NOT race the card against a `no flights`-style text locator: Alaska's
+	// results page always carries a hidden "no flights eligible for your
+	// selected upgrade type" <p>, and `card.Or(text).First()` locks onto that
+	// hidden element and times out even when results are present.)
 	card := page.Locator(alaskaCardSel).First()
 	if err := card.WaitFor(playwright.LocatorWaitForOptions{
 		State:   playwright.WaitForSelectorStateVisible,
-		Timeout: playwright.Float(float64(alaskaCardWait.Milliseconds())),
+		Timeout: playwright.Float(float64(alaskaResultsWait.Milliseconds())),
 	}); err != nil {
-		return fail(err)
+		slog.Warn("alaska: no flight card became visible; extracting whatever rendered",
+			"airline", "alaska", "err", err)
+		page.WaitForTimeout(4000)
+	} else {
+		// The card skeleton renders a beat before its fare tiles / points
+		// prices, so wait for a price to appear before extracting (best effort —
+		// a genuinely empty result never shows one).
+		_ = page.Locator(`[data-testid="award-price"]`).First().WaitFor(playwright.LocatorWaitForOptions{
+			State:   playwright.WaitForSelectorStateVisible,
+			Timeout: playwright.Float(10000),
+		})
+		page.WaitForTimeout(1500)
 	}
-	page.WaitForTimeout(1500)
 
 	result, err := page.Evaluate(AlaskaExtractJS)
 	if err != nil {

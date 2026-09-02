@@ -1,0 +1,107 @@
+<!--
+  Hand-built minimal Delta "Shop with Miles" results grid — real element names,
+  classes and ids observed live on delta.com/flightsearch/search-results
+  (2026-09), trimmed to what DeltaExtractJS reads. Two rows on purpose:
+
+    row 0 (widebody JFK-LAX): Main / Comfort / Premium Select / Delta One
+    row 1 (narrowbody):       Main / Comfort / First / Delta One (sold out)
+
+  The third column is Premium Select on row 0 and First on row 1 — the per-row
+  column swap that the old positional ['Main','Comfort','First'] mapping got
+  wrong. TestDeltaExtractJS asserts the swap is handled.
+-->
+<idp-search-results-head>Award Flights &nbsp; JFK &rarr; LAX &nbsp; Sunday, November 22, 2026</idp-search-results-head>
+<idp-search-results>
+  <idp-search-results-grid-head>
+    <idp-flight-cabin-header-wrapper id="mach-cabin-header">
+      <div id="flight-cabin-header-wrapper">
+        <div class="flex-1"><span id="mach-cabin-header-desktop-BMAIN">Main</span></div>
+        <div class="flex-1"><span id="mach-cabin-header-desktop-CDCP">Comfort</span></div>
+        <div class="flex-1"><span id="mach-cabin-header-desktop-CDPS">Premium Select</span></div>
+        <div class="flex-1"><span id="mach-cabin-header-desktop-CD1">Delta One&reg;</span></div>
+      </div>
+    </idp-flight-cabin-header-wrapper>
+  </idp-search-results-grid-head>
+
+  <idp-flight-grid>
+    <div class="mb-4 flex">
+      <idp-mach-core-flight-card>
+        <idp-mach-core-flight-card-segment-logo>DL 742</idp-mach-core-flight-card-segment-logo>
+        <span>6h 15m</span>
+        <div class="flight-line">
+          <span class="flight-line__times-origin">7:00 am</span>
+          <span class="flight-line__times-destination">10:15 am</span>
+          <span class="flight-stop__airport-code">JFK</span>
+          <span class="flight-stop__airport-code">LAX</span>
+          <span class="flight-line__flight-stops">Nonstop</span>
+        </div>
+      </idp-mach-core-flight-card>
+      <idp-fare-cell-desktop-row-wrapper>
+        <div id="grid-row-0-fare-cell-desktop-CMAIN" class="fare-cell-desktop fare-cell-desktop-CMAIN available">
+          <div class="fare-cell-desktop-container">
+            <div class="fare-cell-desktop-header"><a class="brand-names"><div class="brand-name"><span>Delta Main</span></div></a></div>
+            <div class="fare-cell-desktop-body"><idp-fare-cell-desktop-template>Actual Fare 46,700 miles +$6 One-Way</idp-fare-cell-desktop-template></div>
+          </div>
+        </div>
+        <div id="grid-row-0-fare-cell-desktop-CDCP" class="fare-cell-desktop fare-cell-desktop-CDCP available">
+          <div class="fare-cell-desktop-container">
+            <div class="fare-cell-desktop-header"><a class="brand-names"><div class="brand-name"><span>Delta Comfort Classic</span></div></a></div>
+            <div class="fare-cell-desktop-body"><idp-fare-cell-desktop-template>Actual Fare 55,100 miles +$6 One-Way</idp-fare-cell-desktop-template></div>
+          </div>
+        </div>
+        <div id="grid-row-0-fare-cell-desktop-CDPS" class="fare-cell-desktop fare-cell-desktop-CDPS available">
+          <div class="fare-cell-desktop-container">
+            <div class="fare-cell-desktop-header"><a class="brand-names"><div class="brand-name"><span>Delta Premium Select Classic</span></div></a></div>
+            <div class="fare-cell-desktop-body"><idp-fare-cell-desktop-template>Actual Fare 102,600 miles +$6 One-Way</idp-fare-cell-desktop-template></div>
+          </div>
+        </div>
+        <div id="grid-row-0-fare-cell-desktop-CD1" class="fare-cell-desktop fare-cell-desktop-CD1 available">
+          <div class="fare-cell-desktop-container">
+            <div class="fare-cell-desktop-header"><a class="brand-names"><div class="brand-name"><span>Delta One&reg; Classic</span></div></a></div>
+            <div class="fare-cell-desktop-body"><idp-fare-cell-desktop-template>Actual Fare 147,200 miles +$6 One-Way</idp-fare-cell-desktop-template></div>
+          </div>
+        </div>
+      </idp-fare-cell-desktop-row-wrapper>
+    </div>
+
+    <div class="mb-4 flex">
+      <idp-mach-core-flight-card>
+        <idp-mach-core-flight-card-segment-logo>DL 1567</idp-mach-core-flight-card-segment-logo>
+        <span>6h 30m</span>
+        <div class="flight-line">
+          <span class="flight-line__times-origin">8:00 am</span>
+          <span class="flight-line__times-destination">11:30 am</span>
+          <span class="flight-stop__airport-code">JFK</span>
+          <span class="flight-stop__airport-code">LAX</span>
+          <span class="flight-line__flight-stops">Nonstop</span>
+        </div>
+      </idp-mach-core-flight-card>
+      <idp-fare-cell-desktop-row-wrapper>
+        <div id="grid-row-1-fare-cell-desktop-CMAIN" class="fare-cell-desktop fare-cell-desktop-CMAIN available">
+          <div class="fare-cell-desktop-container">
+            <div class="fare-cell-desktop-header"><a class="brand-names"><div class="brand-name"><span>Delta Main</span></div></a></div>
+            <div class="fare-cell-desktop-body"><idp-fare-cell-desktop-template>Actual Fare 42,700 miles +$6 One-Way</idp-fare-cell-desktop-template></div>
+          </div>
+        </div>
+        <div id="grid-row-1-fare-cell-desktop-CDCP" class="fare-cell-desktop fare-cell-desktop-CDCP available">
+          <div class="fare-cell-desktop-container">
+            <div class="fare-cell-desktop-header"><a class="brand-names"><div class="brand-name"><span>Delta Comfort Classic</span></div></a></div>
+            <div class="fare-cell-desktop-body"><idp-fare-cell-desktop-template>Actual Fare 51,600 miles +$6 One-Way</idp-fare-cell-desktop-template></div>
+          </div>
+        </div>
+        <div id="grid-row-1-fare-cell-desktop-CFIRST" class="fare-cell-desktop fare-cell-desktop-CFIRST available">
+          <div class="fare-cell-desktop-container">
+            <div class="fare-cell-desktop-header"><a class="brand-names"><div class="brand-name"><span>Delta First Classic</span></div></a></div>
+            <div class="fare-cell-desktop-body"><idp-fare-cell-desktop-template>Actual Fare 120,400 miles +$6 One-Way</idp-fare-cell-desktop-template></div>
+          </div>
+        </div>
+        <div id="grid-row-1-fare-cell-desktop-CD1" class="fare-cell-desktop fare-cell-desktop-CD1">
+          <div class="fare-cell-desktop-container">
+            <div class="fare-cell-desktop-header"></div>
+            <div class="fare-cell-desktop-body"><idp-fare-cell-desktop-template>Sold Out</idp-fare-cell-desktop-template></div>
+          </div>
+        </div>
+      </idp-fare-cell-desktop-row-wrapper>
+    </div>
+  </idp-flight-grid>
+</idp-search-results>

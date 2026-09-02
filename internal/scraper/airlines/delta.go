@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
@@ -18,8 +19,15 @@ const (
 	deltaBookURL      = "https://www.delta.com/flight-search/book-a-flight"
 	deltaFormTimeout  = 20 * time.Second
 	deltaResultsWait  = 45 * time.Second
+	deltaGridWait     = 25 * time.Second
 	deltaGridSelector = "idp-flight-grid"
 )
+
+// deltaNoResultsRe matches the copy Delta shows for a route/date with no award
+// space. A search that lands here is a valid empty result, not a failure.
+// TODO: verify against a live no-availability page — this is the common phrasing,
+// not confirmed against Delta's DOM.
+var deltaNoResultsRe = regexp.MustCompile(`(?i)no flights|no award|no results|sold out|couldn't find|could not find`)
 
 // DeltaExtractJS runs in the results page and pulls the flight/fare data out of
 // the DOM — Delta's search-results page is server-rendered and carries no JSON
@@ -40,7 +48,6 @@ const DeltaExtractJS = `() => {
   };
   if (!grid) return JSON.stringify(out);
   const rows = [...grid.children].filter(d => d.querySelector('idp-mach-core-flight-card'));
-  const cabinOrder = ['Main', 'Comfort', 'First'];
   out.flights = rows.map(row => {
     const card = row.querySelector('idp-mach-core-flight-card');
     const cardText = clean(card.textContent);
@@ -63,8 +70,17 @@ const DeltaExtractJS = `() => {
       const av = /miles/i.test(txt) && !/not available/i.test(txt);
       const miles = txt.match(/([\d,]+)\s*miles/i);
       const tax = txt.match(/\+\s*\$?([\d,.]+)/);
+      // Delta labels every fare column with a brand name in its header
+      // ("Delta Main", "Delta Comfort Classic", "Delta Premium Select Classic",
+      // "Delta First Classic", "Delta One® Classic"). The column set is per-row
+      // — one search mixes a First column and a Premium Select column depending
+      // on the aircraft — so the cabin has to be read from the cell, not its
+      // position. Unavailable cells drop the brand header; the parser skips
+      // those before it looks at the cabin, so 'col' + i is only a guard.
+      const cell = c.closest('[id*="-fare-cell-desktop-"]') || c;
+      const brandEl = cell.querySelector('.fare-cell-desktop-header .brand-name');
       return {
-        cabin: cabinOrder[i] || ('col' + i),
+        cabin: clean(brandEl && brandEl.textContent) || ('col' + i),
         available: av,
         miles: av && miles ? +miles[1].replace(/,/g, '') : 0,
         taxUSD: av && tax ? +tax[1].replace(/,/g, '') : 0,
@@ -138,10 +154,14 @@ func ScrapeDelta(profileDir string, headless bool, params scraper.SearchParams) 
 		}
 	}
 
+	// A route/date with no award space never renders the grid; Delta shows a
+	// no-results message instead. Wait for whichever appears. If it was the
+	// no-results message, DeltaExtractJS sees no grid and returns a valid
+	// {"flights":[]} payload, which the worker stores as a success.
 	grid := page.Locator(deltaGridSelector)
-	if err := grid.WaitFor(playwright.LocatorWaitForOptions{
+	if err := grid.Or(page.GetByText(deltaNoResultsRe)).First().WaitFor(playwright.LocatorWaitForOptions{
 		State:   playwright.WaitForSelectorStateVisible,
-		Timeout: playwright.Float(float64(deltaResultsWait.Milliseconds())),
+		Timeout: playwright.Float(float64(deltaGridWait.Milliseconds())),
 	}); err != nil {
 		return fail(err)
 	}
@@ -207,9 +227,12 @@ func fillDeltaSearchForm(page playwright.Page, params scraper.SearchParams) erro
 	// name includes the current value ("Trip Type, Round Trip").
 	tripType := page.Locator("[role=combobox][aria-label*='Trip Type'], [aria-label^='Trip Type']").First()
 	if val, _ := tripType.GetAttribute("aria-label"); !strings.Contains(val, "One Way") {
-		if err := tripType.Click(clickOpts); err == nil {
-			_ = page.GetByRole(playwright.AriaRole("option"), playwright.PageGetByRoleOptions{Name: "One Way"}).
-				Click(clickOpts)
+		if err := tripType.Click(clickOpts); err != nil {
+			return fmt.Errorf("open trip type: %w", err)
+		}
+		if err := page.GetByRole(playwright.AriaRole("option"), playwright.PageGetByRoleOptions{Name: "One Way"}).
+			Click(clickOpts); err != nil {
+			return fmt.Errorf("select One Way: %w", err)
 		}
 	}
 
@@ -223,21 +246,32 @@ func fillDeltaSearchForm(page playwright.Page, params scraper.SearchParams) erro
 	if err := selectDeltaDate(page, params.Date); err != nil {
 		return err
 	}
-	if done := page.GetByRole(playwright.AriaRole("button"), playwright.PageGetByRoleOptions{Name: "Done"}); done != nil {
-		_ = done.Click(playwright.LocatorClickOptions{Timeout: playwright.Float(3000)})
+	// Closes the calendar. Best-effort: the scraper already tolerates landing on
+	// the flexible-dates strip, and a stuck overlay would surface as the
+	// "Find Flights" click timeout in ScrapeDelta.
+	_ = page.GetByRole(playwright.AriaRole("button"), playwright.PageGetByRoleOptions{Name: "Done"}).
+		Click(playwright.LocatorClickOptions{Timeout: playwright.Float(3000)})
+
+	// "Shop with Miles" on — the one form step that must hard-fail. If it doesn't
+	// engage, Delta runs a cash search: DeltaExtractJS gates availability on
+	// /miles/i, so every fare comes back unavailable, 0 awards get stored as a
+	// success, and the ETL wipes the route's previous good rows.
+	if checked, _ := page.GetByLabel("Shop with Miles").IsChecked(); !checked {
+		if err := page.GetByText("Shop with Miles").Click(clickOpts); err != nil {
+			return fmt.Errorf("toggle Shop with Miles: %w", err)
+		}
+	}
+	switch checked, err := page.GetByLabel("Shop with Miles").IsChecked(); {
+	case err != nil:
+		return fmt.Errorf("assert Shop with Miles engaged: %w", err)
+	case !checked:
+		return fmt.Errorf("Shop with Miles toggle did not engage")
 	}
 
-	// "Shop with Miles" on.
-	if miles := page.GetByLabel("Shop with Miles"); miles != nil {
-		if checked, _ := miles.IsChecked(); !checked {
-			_ = page.GetByText("Shop with Miles").Click(clickOpts)
-		}
-	}
-	// "My Dates are Flexible" off (Delta sometimes turns it on with Shop with Miles).
-	if flex := page.GetByLabel("My Dates are Flexible"); flex != nil {
-		if checked, _ := flex.IsChecked(); checked {
-			_ = page.GetByText("My Dates are Flexible").Click(clickOpts)
-		}
+	// "My Dates are Flexible" off (Delta sometimes turns it on with Shop with
+	// Miles). Best-effort: the scraper tolerates the flexible-dates strip.
+	if checked, _ := page.GetByLabel("My Dates are Flexible").IsChecked(); checked {
+		_ = page.GetByText("My Dates are Flexible").Click(clickOpts)
 	}
 	return nil
 }

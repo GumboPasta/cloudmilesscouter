@@ -1,5 +1,5 @@
 {
-  "_comment": "DFW->JFK one-way award search (Shop with Miles), 2026-11-22, anonymous (not logged in). Delta's results page has no JSON payload — the flight/fare data is only in the server-rendered DOM — so internal/scraper/airlines/delta.go extracts it in-browser via page.Evaluate and stores this shape. The live search returned 19 flights; this fixture keeps 6 (nonstop, connections via DTW/ATL, a DAL-origin 'nearby airport' result, and a red-eye that arrives the next day). Values are real.",
+  "_comment": "DFW->JFK one-way award search (Shop with Miles), 2026-11-22, anonymous (not logged in). Delta's results page has no JSON payload — the flight/fare data is only in the server-rendered DOM — so internal/scraper/airlines/delta.go extracts it in-browser via page.Evaluate and stores this shape. The live search returned 19 flights; this fixture keeps 6 (nonstop, connections via DTW/ATL, a DAL-origin 'nearby airport' result, and a red-eye that arrives the next day). Values are real — 'cabin' is the fare column's brand label as the grid renders it (DFW->JFK shows Main/Comfort/First; premium routes also show Delta Premium Select and Delta One).",
   "source": "delta.com/flightsearch/search-results DOM extraction",
   "route": { "origin": "DFW", "destination": "JFK" },
   "dateText": "Sun, Nov 22, 2026",
@@ -15,9 +15,9 @@
       "stops": 0,
       "durationMinutes": 209,
       "fares": [
-        { "cabin": "Main", "available": true, "miles": 22600, "taxUSD": 6 },
-        { "cabin": "Comfort", "available": true, "miles": 30600, "taxUSD": 6 },
-        { "cabin": "First", "available": true, "miles": 135200, "taxUSD": 6 }
+        { "cabin": "Delta Main", "available": true, "miles": 22600, "taxUSD": 6 },
+        { "cabin": "Delta Comfort Classic", "available": true, "miles": 30600, "taxUSD": 6 },
+        { "cabin": "Delta First Classic", "available": true, "miles": 135200, "taxUSD": 6 }
       ]
     },
     {
@@ -30,9 +30,9 @@
       "stops": 1,
       "durationMinutes": 347,
       "fares": [
-        { "cabin": "Main", "available": true, "miles": 37400, "taxUSD": 6 },
-        { "cabin": "Comfort", "available": true, "miles": 43500, "taxUSD": 6 },
-        { "cabin": "First", "available": true, "miles": 135200, "taxUSD": 6 }
+        { "cabin": "Delta Main", "available": true, "miles": 37400, "taxUSD": 6 },
+        { "cabin": "Delta Comfort Classic", "available": true, "miles": 43500, "taxUSD": 6 },
+        { "cabin": "Delta First Classic", "available": true, "miles": 135200, "taxUSD": 6 }
       ]
     },
     {
@@ -45,9 +45,9 @@
       "stops": 1,
       "durationMinutes": 398,
       "fares": [
-        { "cabin": "Main", "available": true, "miles": 37400, "taxUSD": 6 },
-        { "cabin": "Comfort", "available": true, "miles": 41200, "taxUSD": 6 },
-        { "cabin": "First", "available": true, "miles": 77900, "taxUSD": 6 }
+        { "cabin": "Delta Main", "available": true, "miles": 37400, "taxUSD": 6 },
+        { "cabin": "Delta Comfort Classic", "available": true, "miles": 41200, "taxUSD": 6 },
+        { "cabin": "Delta First Classic", "available": true, "miles": 77900, "taxUSD": 6 }
       ]
     },
     {
@@ -60,9 +60,9 @@
       "stops": 1,
       "durationMinutes": 399,
       "fares": [
-        { "cabin": "Main", "available": true, "miles": 57900, "taxUSD": 6 },
-        { "cabin": "Comfort", "available": true, "miles": 61600, "taxUSD": 6 },
-        { "cabin": "First", "available": true, "miles": 77900, "taxUSD": 6 }
+        { "cabin": "Delta Main", "available": true, "miles": 57900, "taxUSD": 6 },
+        { "cabin": "Delta Comfort Classic", "available": true, "miles": 61600, "taxUSD": 6 },
+        { "cabin": "Delta First Classic", "available": true, "miles": 77900, "taxUSD": 6 }
       ]
     },
     {
@@ -75,9 +75,9 @@
       "stops": 1,
       "durationMinutes": 309,
       "fares": [
-        { "cabin": "Main", "available": true, "miles": 73700, "taxUSD": 6 },
-        { "cabin": "Comfort", "available": true, "miles": 77400, "taxUSD": 6 },
-        { "cabin": "First", "available": true, "miles": 93700, "taxUSD": 6 }
+        { "cabin": "Delta Main", "available": true, "miles": 73700, "taxUSD": 6 },
+        { "cabin": "Delta Comfort Classic", "available": true, "miles": 77400, "taxUSD": 6 },
+        { "cabin": "Delta First Classic", "available": true, "miles": 93700, "taxUSD": 6 }
       ]
     },
     {
@@ -90,9 +90,9 @@
       "stops": 1,
       "durationMinutes": 427,
       "fares": [
-        { "cabin": "Main", "available": true, "miles": 96000, "taxUSD": 6 },
-        { "cabin": "Comfort", "available": true, "miles": 102600, "taxUSD": 6 },
-        { "cabin": "First", "available": true, "miles": 116500, "taxUSD": 6 }
+        { "cabin": "Delta Main", "available": true, "miles": 96000, "taxUSD": 6 },
+        { "cabin": "Delta Comfort Classic", "available": true, "miles": 102600, "taxUSD": 6 },
+        { "cabin": "Delta First Classic", "available": true, "miles": 116500, "taxUSD": 6 }
       ]
     }
   ]

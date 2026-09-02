@@ -11,10 +11,6 @@ import (
 )
 
 type alaskaResponse struct {
-	Route struct {
-		Origin      string `json:"origin"`
-		Destination string `json:"destination"`
-	} `json:"route"`
 	Flights []alaskaFlight `json:"flights"`
 }
 
@@ -52,15 +48,6 @@ func (Alaska) Parse(raw storage.RawScrape) ([]storage.NormalizedAward, error) {
 	var resp alaskaResponse
 	if err := json.Unmarshal([]byte(raw.RawPayload), &resp); err != nil {
 		return nil, fmt.Errorf("unmarshal alaska response: %w", err)
-	}
-
-	origin := resp.Route.Origin
-	if origin == "" {
-		origin = raw.Origin
-	}
-	destination := resp.Route.Destination
-	if destination == "" {
-		destination = raw.Destination
 	}
 
 	seen := make(map[string]bool)
@@ -104,12 +91,12 @@ func (Alaska) Parse(raw storage.RawScrape) ([]storage.NormalizedAward, error) {
 			awards = append(awards, storage.NormalizedAward{
 				AirlineCode:       "alaska",
 				AirlineName:       "Alaska Airlines",
-				Origin:            origin,
-				Destination:       destination,
+				Origin:            raw.Origin,
+				Destination:       raw.Destination,
 				SearchDate:        raw.SearchDate,
 				ScrapedAt:         raw.ScrapedAt,
 				Cabin:             cabin,
-				AwardType:         "Dynamic",
+				AwardType:         "dynamic",
 				Currency:          "USD",
 				FlightNumber:      flightNumber,
 				FlightOrigin:      f.Origin,

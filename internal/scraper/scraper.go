@@ -1,7 +1,7 @@
 package scraper
 
 import (
-	"errors"
+	"fmt"
 	"time"
 
 	"github.com/playwright-community/playwright-go"
@@ -82,7 +82,7 @@ func CaptureJSONResponse(page playwright.Page, urlGlob string, timeout time.Dura
 		return nil, err
 	}
 	if !resp.Ok() {
-		return nil, errors.New("unexpected response status: " + resp.StatusText())
+		return nil, fmt.Errorf("unexpected response status %d %q for %s", resp.Status(), resp.StatusText(), urlGlob)
 	}
 	return resp.Body()
 }

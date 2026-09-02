@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"log/slog"
+	"time"
 
 	"go.mongodb.org/mongo-driver/v2/mongo"
 
@@ -25,17 +26,46 @@ var parsersByAirline = map[string]Parser{
 	"alaska":   parsers.Alaska{},
 }
 
-// Run reads every raw scrape from MongoDB, normalizes it via the parser
-// registered for its airline, and writes the results into Postgres.
+// RegisterParser adds or overrides the parser for an airline. It exists for the
+// integration test that pushes synthetic raw scrapes through Run; production
+// code registers parsers in the map literal above.
+func RegisterParser(airline string, p Parser) {
+	parsersByAirline[airline] = p
+}
+
+// Run reads every raw scrape from MongoDB, keeps only the newest doc per
+// searched route+date, normalizes each via the parser registered for its
+// airline, and writes the results into Postgres.
 func Run(ctx context.Context, client *mongo.Client, db *sql.DB) error {
 	docs, err := storage.FindRawScrapes(ctx, client)
 	if err != nil {
 		return err
 	}
 
-	var awards []storage.NormalizedAward
-	skipped := 0
+	// Retries (and any re-scrape) leave more than one doc for the same searched
+	// route+date. WriteAwards only clears each key once per batch, so parsing
+	// every doc would stack both scrapes' rows in Postgres. Keep the newest.
+	type rawKey struct {
+		airline, origin, destination string
+		searchDate                   time.Time
+	}
+	newest := make(map[rawKey]storage.RawScrape, len(docs))
 	for _, doc := range docs {
+		k := rawKey{doc.Airline, doc.Origin, doc.Destination, doc.SearchDate}
+		if prev, ok := newest[k]; !ok || doc.ScrapedAt.After(prev.ScrapedAt) {
+			newest[k] = doc
+		}
+	}
+
+	var awards []storage.NormalizedAward
+	// Keys we parsed this run, so WriteAwards clears each one's stale rows even
+	// when the parse produced zero awards (empty extraction, still a success).
+	// A doc we skip (no parser, or a parse error) is left untouched: we don't
+	// know the airline's real state, and wiping on a transient parse error would
+	// be worse than serving slightly stale rows.
+	clearKeys := make([]storage.RawScrapeKey, 0, len(newest))
+	skipped := 0
+	for k, doc := range newest {
 		parser, ok := parsersByAirline[doc.Airline]
 		if !ok {
 			slog.Warn("no parser registered for airline, skipping", "airline", doc.Airline)
@@ -49,13 +79,19 @@ func Run(ctx context.Context, client *mongo.Client, db *sql.DB) error {
 			skipped++
 			continue
 		}
+		clearKeys = append(clearKeys, storage.RawScrapeKey{
+			AirlineCode: k.airline,
+			Origin:      k.origin,
+			Destination: k.destination,
+			SearchDate:  k.searchDate,
+		})
 		awards = append(awards, parsed...)
 	}
 
-	if err := storage.WriteAwards(ctx, db, awards); err != nil {
+	if err := storage.WriteAwards(ctx, db, awards, clearKeys); err != nil {
 		return err
 	}
 
-	slog.Info("etl run complete", "docs", len(docs), "awards_written", len(awards), "docs_skipped", skipped)
+	slog.Info("etl run complete", "docs", len(docs), "docs_deduped", len(newest), "keys_parsed", len(clearKeys), "awards_written", len(awards), "docs_skipped", skipped)
 	return nil
 }

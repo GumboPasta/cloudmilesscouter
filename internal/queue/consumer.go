@@ -3,60 +3,56 @@ package queue
 import (
 	"context"
 	"encoding/json"
-	"sync"
+	"strings"
 
 	"github.com/segmentio/kafka-go"
 )
+
+// splitBrokers turns a comma-separated broker list ("host1:9092,host2:9092")
+// into a slice, trimming whitespace and dropping empty entries. A single
+// address with no comma comes back as a one-element slice.
+func splitBrokers(brokers string) []string {
+	var addrs []string
+	for _, b := range strings.Split(brokers, ",") {
+		if b = strings.TrimSpace(b); b != "" {
+			addrs = append(addrs, b)
+		}
+	}
+	return addrs
+}
 
 // Consumer reads ScrapeJobs from the scrape.jobs topic as part of a consumer
 // group, so several workers (or worker processes) share the topic's partitions.
 type Consumer struct {
 	r *kafka.Reader
-
-	mu        sync.Mutex
-	committed map[int]int64 // partition -> highest committed offset+1
 }
 
 // NewConsumer builds a Consumer joined to groupID against the given
-// comma-separated broker list. Offsets are committed explicitly via Commit
-// after a job finishes, giving at-least-once delivery: a job whose worker
-// crashes mid-scrape is redelivered on restart.
+// comma-separated broker list. The fetch loop commits each message as soon as
+// it is pulled, before the scrape runs, so delivery is at-most-once: a worker
+// that crashes mid-scrape does not get the job back. The recovery path for a
+// failed scrape is the re-enqueue in the worker's retry, which writes a fresh
+// message.
 func NewConsumer(brokers, groupID string) *Consumer {
 	return &Consumer{
 		r: kafka.NewReader(kafka.ReaderConfig{
-			Brokers: []string{brokers},
+			Brokers: splitBrokers(brokers),
 			GroupID: groupID,
 			Topic:   Topic,
 		}),
-		committed: make(map[int]int64),
 	}
 }
 
 // Fetch blocks until the next message is available, ctx is cancelled, or the
-// reader is closed. The returned message is not committed — call Commit once
-// its job is done.
+// reader is closed.
 func (c *Consumer) Fetch(ctx context.Context) (kafka.Message, error) {
 	return c.r.FetchMessage(ctx)
 }
 
 // Commit marks msg (and everything before it on its partition) as processed.
-// It is safe to call from multiple workers concurrently: kafka-go commits
-// exactly the offset it is handed with no memory of earlier commits, so a
-// worker finishing an older message after a newer one would otherwise drag the
-// committed position backwards. Commit tracks the high-water mark per partition
-// and skips any commit that would not advance it.
+// The fetch loop calls it from a single goroutine right after Fetch.
 func (c *Consumer) Commit(ctx context.Context, msg kafka.Message) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if msg.Offset+1 <= c.committed[msg.Partition] {
-		return nil
-	}
-	if err := c.r.CommitMessages(ctx, msg); err != nil {
-		return err
-	}
-	c.committed[msg.Partition] = msg.Offset + 1
-	return nil
+	return c.r.CommitMessages(ctx, msg)
 }
 
 // Decode unmarshals a fetched message's value into a ScrapeJob.
@@ -66,7 +62,7 @@ func Decode(msg kafka.Message) (ScrapeJob, error) {
 	return job, err
 }
 
-// Close stops the reader and commits any pending offsets.
+// Close stops the reader.
 func (c *Consumer) Close() error {
 	return c.r.Close()
 }
