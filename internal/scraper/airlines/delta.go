@@ -48,7 +48,6 @@ const DeltaExtractJS = `() => {
   };
   if (!grid) return JSON.stringify(out);
   const rows = [...grid.children].filter(d => d.querySelector('idp-mach-core-flight-card'));
-  const cabinOrder = ['Main', 'Comfort', 'First'];
   out.flights = rows.map(row => {
     const card = row.querySelector('idp-mach-core-flight-card');
     const cardText = clean(card.textContent);
@@ -71,8 +70,17 @@ const DeltaExtractJS = `() => {
       const av = /miles/i.test(txt) && !/not available/i.test(txt);
       const miles = txt.match(/([\d,]+)\s*miles/i);
       const tax = txt.match(/\+\s*\$?([\d,.]+)/);
+      // Delta labels every fare column with a brand name in its header
+      // ("Delta Main", "Delta Comfort Classic", "Delta Premium Select Classic",
+      // "Delta First Classic", "Delta One® Classic"). The column set is per-row
+      // — one search mixes a First column and a Premium Select column depending
+      // on the aircraft — so the cabin has to be read from the cell, not its
+      // position. Unavailable cells drop the brand header; the parser skips
+      // those before it looks at the cabin, so 'col' + i is only a guard.
+      const cell = c.closest('[id*="-fare-cell-desktop-"]') || c;
+      const brandEl = cell.querySelector('.fare-cell-desktop-header .brand-name');
       return {
-        cabin: cabinOrder[i] || ('col' + i),
+        cabin: clean(brandEl && brandEl.textContent) || ('col' + i),
         available: av,
         miles: av && miles ? +miles[1].replace(/,/g, '') : 0,
         taxUSD: av && tax ? +tax[1].replace(/,/g, '') : 0,

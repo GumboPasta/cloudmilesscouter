@@ -39,9 +39,10 @@ type deltaFare struct {
 // internal/scraper/airlines/delta.go (Delta's results page has no JSON API).
 type Delta struct{}
 
-// Parse emits one NormalizedAward per flight × available cabin. Delta's
-// "Shop with Miles" grid has three cabin columns (Main / Comfort / First);
-// cabins marked unavailable are skipped.
+// Parse emits one NormalizedAward per flight × available cabin. The extractor
+// reads each fare column's brand label from the "Shop with Miles" grid
+// (Main / Comfort / First, plus Premium Select and Delta One on premium
+// routes); mapDeltaCabin maps it. Cabins marked unavailable are skipped.
 func (Delta) Parse(raw storage.RawScrape) ([]storage.NormalizedAward, error) {
 	var resp deltaResponse
 	if err := json.Unmarshal([]byte(raw.RawPayload), &resp); err != nil {
@@ -129,17 +130,28 @@ func deltaClock(date time.Time, clock string) (time.Time, bool) {
 	return time.Date(date.Year(), date.Month(), date.Day(), t.Hour(), t.Minute(), 0, 0, time.UTC), true
 }
 
-// mapDeltaCabin maps a Delta cabin-column label to the cabins table names.
-func mapDeltaCabin(cabin string) (string, bool) {
-	switch strings.ToLower(strings.TrimSpace(cabin)) {
-	case "main", "main cabin":
-		return "economy", true
-	case "comfort", "comfort+", "delta comfort+", "premium select", "delta premium select":
-		return "premium_economy", true
-	case "first", "first class", "delta first":
-		return "first", true
-	case "delta one", "business":
+// mapDeltaCabin maps a Delta fare-column brand label to a cabins table name.
+// The label is what the extractor reads off the results-grid column header:
+// "Delta Main", "Delta Comfort Classic", "Delta Premium Select Classic",
+// "Delta First Classic", "Delta One® Classic" (other/older pages render the
+// bare "Main"/"Comfort"/"First"). Delta decorates the brand with tier words
+// ("Classic", "Basic"), a ®, and a "Delta " prefix that vary by fare and
+// route, so match on the one distinguishing word rather than the whole string.
+func mapDeltaCabin(label string) (string, bool) {
+	l := strings.ToLower(strings.TrimSpace(label))
+	switch {
+	case l == "":
+		return "", false
+	case strings.Contains(l, "delta one"), strings.Contains(l, "business"):
 		return "business", true
+	case strings.Contains(l, "premium select"):
+		return "premium_economy", true
+	case strings.Contains(l, "comfort"):
+		return "premium_economy", true
+	case strings.Contains(l, "first"):
+		return "first", true
+	case strings.Contains(l, "main"), strings.Contains(l, "coach"), strings.Contains(l, "basic"):
+		return "economy", true
 	default:
 		return "", false
 	}
