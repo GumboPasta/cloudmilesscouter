@@ -115,9 +115,20 @@ func ensureLoggedIn(page playwright.Page, password string) error {
 	pw := page.Locator(`#password`).First()
 	if err := pw.WaitFor(playwright.LocatorWaitForOptions{
 		State:   playwright.WaitForSelectorStateVisible,
-		Timeout: playwright.Float(6000),
+		Timeout: playwright.Float(8000),
 	}); err != nil {
-		return nil // no password prompt shown, session still valid
+		// No remembered-password prompt. Usually the session is still good and
+		// this is a no-op — but if United is showing the "sign in to see miles
+		// pricing" gate, the device trust lapsed entirely and only
+		// `bootstrap-auto` (email + emailed code) can restore it. Surface that
+		// instead of failing later on a non-OK FetchFlights.
+		gate := page.GetByText(regexp.MustCompile(`(?i)signed-in to see flight results with miles`))
+		if n, _ := gate.Count(); n > 0 {
+			if vis, _ := gate.First().IsVisible(); vis {
+				return errors.New("United miles sign-in gate is up but no password prompt appeared — the profile needs `scraper bootstrap-auto`")
+			}
+		}
+		return nil
 	}
 
 	if password == "" {
