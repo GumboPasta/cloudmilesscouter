@@ -62,11 +62,19 @@ const AlaskaExtractJS = `() => {
     const dur = clean(q('.duration') && q('.duration').textContent);
     const dm = dur.match(/(\d+)h(?:\s*(\d+)m)?/);
     const nd = clean(q('.duration-next-day') && q('.duration-next-day').textContent).match(/\+(\d+)\s*day/);
-    const stopText = clean(q('.relative') && q('.relative').textContent);
-    const via = (stopText.match(/[A-Z]{3}/g) || []);
-    const stops = /nonstop/i.test(stopText) ? 0 : (via.length || 1);
+    // Stop count comes from the details section's data-testid
+    // ("flight-details-<i>-stops-<n>"); the connection airport(s) come from the
+    // path widget's text ("PDX 8h 2m"), found by its aria-label rather than a
+    // utility class. Fall back to parsing the path text if the testid is gone.
+    const stopsEl = q('[data-testid*="-stops-"]');
+    const stopsTid = stopsEl ? (stopsEl.getAttribute('data-testid') || '') : '';
+    const pathEl = q('[aria-label*="flight path"], [aria-label*="Flight path"]');
+    const stopText = clean(pathEl && pathEl.textContent);
+    const via = (stopText.match(/\b[A-Z]{3}\b/g) || []);
+    const stopM = stopsTid.match(/-stops-(\d+)/);
+    const stops = stopM ? +stopM[1] : (/nonstop/i.test(stopText) ? 0 : (via.length || 1));
     const airportCodes = qa('.airport-code').map(e => clean(e.textContent));
-    const fares = qa('button')
+    const fares = qa('[data-testid^="valuetile-"]')
       .map(b => clean(b.textContent))
       .filter(t => /points/i.test(t) && t.length < 90)
       .map(t => {
