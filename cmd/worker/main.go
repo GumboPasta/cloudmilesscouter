@@ -131,7 +131,7 @@ func process(ctx context.Context, cfg config.Config, client *mongo.Client, produ
 	}
 
 	logJob := slog.With("worker", workerID, "airline", job.Airline, "origin", job.Origin,
-		"destination", job.Destination, "date", job.Date, "cabin", job.Cabin, "attempt", job.Attempt)
+		"destination", job.Destination, "date", job.Date, "attempt", job.Attempt)
 
 	// Bad airline or date can never succeed on a retry — skip and move on.
 	scrapeFn, ok := airlines.Scrapers[job.Airline]

@@ -120,14 +120,14 @@ This project is phased intentionally. **Phases 1 and 2 have zero queue infrastru
 
 **Step 2 — Build Job Producer**
 - [x] Write Go code to dispatch one job per airline into Kafka topic
-- [x] Job payload: airline ID, route, dates, cabin class
+- [x] Job payload: airline ID, route, dates
 
 **Step 3 — Build Worker Pool**
 - [x] Write Go worker pool (5–10 concurrent workers)
 - [x] Each worker pulls a job from Kafka
 - [x] Each worker spawns a Playwright browser instance
 - [x] Worker scrapes airline, stores raw result in MongoDB
-- [x] Worker acknowledges job completion back to Kafka
+- [x] Worker acknowledges job completion back to Kafkalet
 
 **Step 4 — Add More Airlines**
 - [x] Add American Airlines parser — anonymous award search, reads the `ng-state` SSR JSON from aa.com; scraper `internal/scraper/airlines/american.go`, parser `internal/etl/parsers/american.go`
