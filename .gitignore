@@ -26,3 +26,7 @@ docker/pgadmin/pgpass
 
 # Debug screenshots dropped by scraper bootstrap on failure
 *-bootstrap-failure.png
+
+# Local pre-Phase-4 audit notes, not part of the project
+AnalysisPlan.md
+AnalysisReport.md
