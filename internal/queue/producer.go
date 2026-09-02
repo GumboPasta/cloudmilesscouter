@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"time"
 
 	"github.com/segmentio/kafka-go"
 )
@@ -37,6 +38,11 @@ func NewProducer(brokers string) *Producer {
 			Topic:        Topic,
 			Balancer:     &kafka.Hash{},
 			RequiredAcks: kafka.RequireAll,
+			// Each Enqueue is its own synchronous WriteMessages call, so the
+			// writer's default 1s BatchTimeout added ~1s of latency per job — a
+			// four-airline dispatch took ~4s. The jobs are tiny and dispatch is
+			// low-volume; flush almost immediately.
+			BatchTimeout: 50 * time.Millisecond,
 		},
 	}
 }
