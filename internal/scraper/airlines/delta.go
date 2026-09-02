@@ -219,9 +219,12 @@ func fillDeltaSearchForm(page playwright.Page, params scraper.SearchParams) erro
 	// name includes the current value ("Trip Type, Round Trip").
 	tripType := page.Locator("[role=combobox][aria-label*='Trip Type'], [aria-label^='Trip Type']").First()
 	if val, _ := tripType.GetAttribute("aria-label"); !strings.Contains(val, "One Way") {
-		if err := tripType.Click(clickOpts); err == nil {
-			_ = page.GetByRole(playwright.AriaRole("option"), playwright.PageGetByRoleOptions{Name: "One Way"}).
-				Click(clickOpts)
+		if err := tripType.Click(clickOpts); err != nil {
+			return fmt.Errorf("open trip type: %w", err)
+		}
+		if err := page.GetByRole(playwright.AriaRole("option"), playwright.PageGetByRoleOptions{Name: "One Way"}).
+			Click(clickOpts); err != nil {
+			return fmt.Errorf("select One Way: %w", err)
 		}
 	}
 
@@ -235,21 +238,32 @@ func fillDeltaSearchForm(page playwright.Page, params scraper.SearchParams) erro
 	if err := selectDeltaDate(page, params.Date); err != nil {
 		return err
 	}
-	if done := page.GetByRole(playwright.AriaRole("button"), playwright.PageGetByRoleOptions{Name: "Done"}); done != nil {
-		_ = done.Click(playwright.LocatorClickOptions{Timeout: playwright.Float(3000)})
+	// Closes the calendar. Best-effort: the scraper already tolerates landing on
+	// the flexible-dates strip, and a stuck overlay would surface as the
+	// "Find Flights" click timeout in ScrapeDelta.
+	_ = page.GetByRole(playwright.AriaRole("button"), playwright.PageGetByRoleOptions{Name: "Done"}).
+		Click(playwright.LocatorClickOptions{Timeout: playwright.Float(3000)})
+
+	// "Shop with Miles" on — the one form step that must hard-fail. If it doesn't
+	// engage, Delta runs a cash search: DeltaExtractJS gates availability on
+	// /miles/i, so every fare comes back unavailable, 0 awards get stored as a
+	// success, and the ETL wipes the route's previous good rows.
+	if checked, _ := page.GetByLabel("Shop with Miles").IsChecked(); !checked {
+		if err := page.GetByText("Shop with Miles").Click(clickOpts); err != nil {
+			return fmt.Errorf("toggle Shop with Miles: %w", err)
+		}
+	}
+	switch checked, err := page.GetByLabel("Shop with Miles").IsChecked(); {
+	case err != nil:
+		return fmt.Errorf("assert Shop with Miles engaged: %w", err)
+	case !checked:
+		return fmt.Errorf("Shop with Miles toggle did not engage")
 	}
 
-	// "Shop with Miles" on.
-	if miles := page.GetByLabel("Shop with Miles"); miles != nil {
-		if checked, _ := miles.IsChecked(); !checked {
-			_ = page.GetByText("Shop with Miles").Click(clickOpts)
-		}
-	}
-	// "My Dates are Flexible" off (Delta sometimes turns it on with Shop with Miles).
-	if flex := page.GetByLabel("My Dates are Flexible"); flex != nil {
-		if checked, _ := flex.IsChecked(); checked {
-			_ = page.GetByText("My Dates are Flexible").Click(clickOpts)
-		}
+	// "My Dates are Flexible" off (Delta sometimes turns it on with Shop with
+	// Miles). Best-effort: the scraper tolerates the flexible-dates strip.
+	if checked, _ := page.GetByLabel("My Dates are Flexible").IsChecked(); checked {
+		_ = page.GetByText("My Dates are Flexible").Click(clickOpts)
 	}
 	return nil
 }
