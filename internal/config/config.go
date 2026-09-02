@@ -26,6 +26,10 @@ type Config struct {
 	RetryBackoffBase   time.Duration // first retry waits this long; doubles each attempt (capped in the worker)
 }
 
+// Load reads .env from the current working directory (not the executable's
+// directory or the repo root), then falls back to defaults. The profile-dir
+// defaults below are relative too, so run the binaries from the repo root or
+// set the vars explicitly — see the "Running the binaries" note in README.md.
 func Load() Config {
 	loadDotEnv(".env")
 

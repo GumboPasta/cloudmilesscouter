@@ -136,7 +136,7 @@ This project is phased intentionally. **Phases 1 and 2 have zero queue infrastru
 - [x] Test all four running in parallel via worker pool — one `producer` search fans out to 4 jobs; the worker pool scrapes American, Delta and Alaska concurrently and all land in MongoDB → ETL → PostgreSQL. (United's login expired mid-Phase 3 — see the note below Step 6 for the fix and why United needs a login at all, unlike the other three.)
 
 **Step 5 — Add Circuit Breakers & Retry Logic**
-- [x] If airline site is down, fail gracefully — in-memory per-airline circuit breaker (`internal/breaker`): after 3 consecutive failures for an airline, its jobs are deferred for a 60s cooldown instead of launching a browser
+- [x] If airline site is down, fail gracefully — in-memory per-airline circuit breaker (`internal/breaker`): after 5 consecutive failures for an airline (kept above `MAX_SCRAPE_ATTEMPTS` so one job's own retry run can't trip it), its jobs are dropped fast for a 60s cooldown instead of launching a browser; the producer re-dispatches on its next cadence
 - [x] Re-queue failed jobs with exponential backoff — worker re-enqueues a failed scrape/store with an incremented `attempt` after `RETRY_BACKOFF_BASE` × 2ⁿ (capped 30s), up to `MAX_SCRAPE_ATTEMPTS` (3) tries, then drops it with a "giving up" log. Kafka dead-letter topic deferred to Phase 6.
 - [x] Log failure reason with structured logging — every failure/re-queue line carries a coarse `reason` (`timeout`, `blocked`, `browser`, `store`, `circuit_open`, `other`) via `slog`
 
@@ -155,6 +155,14 @@ This project is phased intentionally. **Phases 1 and 2 have zero queue infrastru
 > 5. Set `.env`'s `GMAIL_ADDRESS` / `GMAIL_APP_PASSWORD` to the throwaway account's address and that App Password.
 >
 > The throwaway inbox then holds nothing but forwarded United mail — if its App Password ever leaked, the blast radius is United OTP codes with a ~90s validity window, not the real inbox.
+
+**Running the binaries.** `config.Load()` reads `.env` from the current working
+directory, and the `UNITED_PROFILE_DIR` / `AMERICAN_PROFILE_DIR` / etc. defaults
+(`.united-profile`, …) are relative too. Run `producer` / `worker` / `etl` /
+`scraper` from the repo root, or set `MONGO_URI`, `POSTGRES_URI`,
+`KAFKA_BROKERS`, the `*_PROFILE_DIR` vars, and the United/Gmail creds explicitly
+in the real environment — otherwise you silently get the localhost defaults and
+an empty United credential.
 
 **End-to-end smoke test.** `go test -tags e2e ./cmd/worker` runs the whole pipeline — producer → Kafka → worker `process` → MongoDB → ETL → PostgreSQL — with a stub scraper and stub parser, so no browser or live airline site is involved. Needs the compose stack up and `cmd/worker` **not** running (the test joins the real `scrape-workers` group and drains any queued jobs as a setup step). It re-runs the ETL over all real MongoDB docs too, so it also catches ETL regressions on real data.
 
