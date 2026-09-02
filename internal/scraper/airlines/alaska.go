@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/url"
+	"regexp"
 	"time"
 
 	"github.com/playwright-community/playwright-go"
@@ -14,9 +15,15 @@ import (
 
 const (
 	alaskaResultsBase = "https://www.alaskaair.com/search/results"
-	alaskaCardWait    = 45 * time.Second
+	alaskaResultsWait = 25 * time.Second
 	alaskaCardSel     = ".flight-card-content"
 )
+
+// alaskaNoResultsRe matches the copy Alaska shows for a route/date with no award
+// space. A search that lands here is a valid empty result, not a failure.
+// TODO: verify against a live no-availability page — this is the common phrasing,
+// not confirmed against Alaska's DOM.
+var alaskaNoResultsRe = regexp.MustCompile(`(?i)no flights|no award|no results|sold out|couldn't find|could not find`)
 
 // BuildAlaskaResultsURL builds the deep-link that runs an Alaska award ("Use
 // points") search directly — no form to drive. Origin/Destination are IATA
@@ -115,10 +122,14 @@ func ScrapeAlaska(profileDir string, headless bool, params scraper.SearchParams)
 		return fail(err)
 	}
 
+	// A route/date with no award space never renders a flight card; Alaska shows
+	// a no-results message instead. Wait for whichever appears. If it was the
+	// no-results message, AlaskaExtractJS finds no cards and returns a valid
+	// {"flights":[]} payload, which the worker stores as a success.
 	card := page.Locator(alaskaCardSel).First()
-	if err := card.WaitFor(playwright.LocatorWaitForOptions{
+	if err := card.Or(page.GetByText(alaskaNoResultsRe)).First().WaitFor(playwright.LocatorWaitForOptions{
 		State:   playwright.WaitForSelectorStateVisible,
-		Timeout: playwright.Float(float64(alaskaCardWait.Milliseconds())),
+		Timeout: playwright.Float(float64(alaskaResultsWait.Milliseconds())),
 	}); err != nil {
 		return fail(err)
 	}

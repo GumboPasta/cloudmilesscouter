@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
@@ -18,8 +19,15 @@ const (
 	deltaBookURL      = "https://www.delta.com/flight-search/book-a-flight"
 	deltaFormTimeout  = 20 * time.Second
 	deltaResultsWait  = 45 * time.Second
+	deltaGridWait     = 25 * time.Second
 	deltaGridSelector = "idp-flight-grid"
 )
+
+// deltaNoResultsRe matches the copy Delta shows for a route/date with no award
+// space. A search that lands here is a valid empty result, not a failure.
+// TODO: verify against a live no-availability page — this is the common phrasing,
+// not confirmed against Delta's DOM.
+var deltaNoResultsRe = regexp.MustCompile(`(?i)no flights|no award|no results|sold out|couldn't find|could not find`)
 
 // DeltaExtractJS runs in the results page and pulls the flight/fare data out of
 // the DOM — Delta's search-results page is server-rendered and carries no JSON
@@ -138,10 +146,14 @@ func ScrapeDelta(profileDir string, headless bool, params scraper.SearchParams) 
 		}
 	}
 
+	// A route/date with no award space never renders the grid; Delta shows a
+	// no-results message instead. Wait for whichever appears. If it was the
+	// no-results message, DeltaExtractJS sees no grid and returns a valid
+	// {"flights":[]} payload, which the worker stores as a success.
 	grid := page.Locator(deltaGridSelector)
-	if err := grid.WaitFor(playwright.LocatorWaitForOptions{
+	if err := grid.Or(page.GetByText(deltaNoResultsRe)).First().WaitFor(playwright.LocatorWaitForOptions{
 		State:   playwright.WaitForSelectorStateVisible,
-		Timeout: playwright.Float(float64(deltaResultsWait.Milliseconds())),
+		Timeout: playwright.Float(float64(deltaGridWait.Milliseconds())),
 	}); err != nil {
 		return fail(err)
 	}

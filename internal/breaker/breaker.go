@@ -12,9 +12,11 @@ import (
 )
 
 // Trips the breaker after this many consecutive failures for a key; stays open
-// for Cooldown after tripping.
+// for Cooldown after tripping. Threshold is kept above the worker's MaxAttempts
+// (default 3) so one job's full retry run can never trip the breaker on its own
+// — only failures across distinct jobs do.
 const (
-	Threshold = 3
+	Threshold = 5
 	Cooldown  = 60 * time.Second
 )
 
