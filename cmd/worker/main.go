@@ -98,6 +98,13 @@ func main() {
 				break // shutting down
 			}
 			slog.Error("fetch failed", "err", err)
+			// A persistently broken reader (broker down, topic gone) would
+			// otherwise spin this loop and flood the log. Pause before retrying,
+			// but stay responsive to shutdown.
+			select {
+			case <-time.After(time.Second):
+			case <-ctx.Done():
+			}
 			continue
 		}
 		// Commit before the scrape runs: at-most-once. A failed scrape is
