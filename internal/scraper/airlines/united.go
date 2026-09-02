@@ -432,9 +432,12 @@ func firstVisible(candidates []playwright.Locator, timeout time.Duration) (playw
 func describeForms(page playwright.Page) string {
 	const js = `() => {
 		const vis = el => !!(el.offsetWidth || el.offsetHeight);
+		// No el.value: a filled #password / #MPIDEmailField would otherwise put the
+		// typed MileagePlus password or username straight into the failure log.
+		// United's real buttons are <button> elements, so el.innerText covers them.
 		const desc = el => [el.tagName, el.type||'', el.id||'', el.name||'',
 			el.getAttribute('aria-label')||'', el.placeholder||'',
-			(el.innerText||el.value||'').trim().slice(0,30)]
+			(el.innerText||'').trim().slice(0,30)]
 			.filter(Boolean).join('|');
 		return [...document.querySelectorAll('input,button,a[role="button"]')]
 			.filter(vis).map(desc).join('  //  ');
