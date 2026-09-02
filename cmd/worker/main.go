@@ -131,9 +131,13 @@ func process(ctx context.Context, cfg config.Config, client *mongo.Client, produ
 		return
 	}
 
+	// Circuit open: drop the job instead of retrying. Every retry inside the
+	// 60s cooldown would be a no-op that still burns an attempt, so a job that
+	// lands here gets dropped within ~6s having never been scraped. The producer
+	// re-dispatches searches on its own cadence, so a dropped job comes back on
+	// the next dispatch, after the cooldown has had a chance to pass.
 	if !brk.Allow(job.Airline) {
-		logJob.Warn("circuit open for airline, deferring job", "reason", "circuit_open")
-		retry(ctx, cfg, producer, logJob, job, "circuit_open")
+		logJob.Warn("circuit open for airline, dropping job", "reason", "circuit_open")
 		return
 	}
 
