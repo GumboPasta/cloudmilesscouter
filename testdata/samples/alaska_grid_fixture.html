@@ -10,6 +10,11 @@
   TestAlaskaExtractJS asserts the stop count comes from the
   "flight-details-<i>-stops-<n>" data-testid and the via airport from the path
   widget's aria-label element, not from the old .relative utility class.
+
+  Card 0 uses the "fare-tile-v2" tile markup the anonymous results page renders
+  (class "fare-tile fare-tile--<cabin>"); card 1 uses the older bare-<button>
+  form. The extractor matches any <button> whose text carries both a points
+  amount and a $ tax, so both are picked up.
 -->
 <h1 class="route-heading">Seattle (SEA) to San Diego (SAN)</h1>
 
@@ -28,9 +33,9 @@
     <span class="arrival-time" data-testid="arrival-time">8:48 am</span>
     <span class="airport-code">SAN</span>
   </div>
-  <div class="flight-card-fares">
-    <button data-testid="valuetile-0-0">Main 17.5k points pts + $6 One way</button>
-    <button data-testid="valuetile-0-1">First 32.5k points pts + $6 One way Recliner last 5 seats</button>
+  <div class="flight-card-fares-v2" data-testid="flight-card-fares-v2" role="group">
+    <button data-testid="fare-tile-v2-0-0" class="fare-tile fare-tile--main flight-card-fare-tile-v2">Main Refundable 17.5k points pts + $6 One way</button>
+    <button data-testid="fare-tile-v2-0-1" class="fare-tile fare-tile--first flight-card-fare-tile-v2">First Recliner Refundable 32.5k points pts + $6 One way last 5 seats</button>
   </div>
 </div>
 

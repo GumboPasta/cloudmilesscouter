@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/url"
-	"regexp"
 	"time"
 
 	"github.com/playwright-community/playwright-go"
@@ -18,12 +17,6 @@ const (
 	alaskaResultsWait = 25 * time.Second
 	alaskaCardSel     = ".flight-card-content"
 )
-
-// alaskaNoResultsRe matches the copy Alaska shows for a route/date with no award
-// space. A search that lands here is a valid empty result, not a failure.
-// TODO: verify against a live no-availability page — this is the common phrasing,
-// not confirmed against Alaska's DOM.
-var alaskaNoResultsRe = regexp.MustCompile(`(?i)no flights|no award|no results|sold out|couldn't find|could not find`)
 
 // BuildAlaskaResultsURL builds the deep-link that runs an Alaska award ("Use
 // points") search directly — no form to drive. Origin/Destination are IATA
@@ -74,13 +67,21 @@ const AlaskaExtractJS = `() => {
     const stopM = stopsTid.match(/-stops-(\d+)/);
     const stops = stopM ? +stopM[1] : (/nonstop/i.test(stopText) ? 0 : (via.length || 1));
     const airportCodes = qa('.airport-code').map(e => clean(e.textContent));
-    const fares = qa('[data-testid^="valuetile-"]')
-      .map(b => clean(b.textContent))
-      .filter(t => /points/i.test(t) && t.length < 90)
-      .map(t => {
-        const cabin = (t.match(/^(Saver|Main|First|Business)/i) || ['', 'Main'])[1];
+    // A fare is a <button> whose text carries both a points amount and a $
+    // tax — version-agnostic (the tile component has been "fare-tile",
+    // "valuetile" and "fare-tile-v2" across redesigns; the anonymous and
+    // signed-in pages don't always render the same one). Cabin comes from the
+    // "fare-tile--<cabin>" modifier class when present, else the leading word.
+    const fares = qa('button')
+      .filter(b => /\bpoints\b/i.test(b.textContent) && /\$\s?\d/.test(b.textContent))
+      .map(b => {
+        const t = clean(b.textContent);
+        const clsCabin = (String(b.className).match(/fare-tile--([a-z]+)/i) || [])[1];
+        const cabin = clsCabin
+          ? clsCabin[0].toUpperCase() + clsCabin.slice(1)
+          : (t.match(/\b(Saver|Main|First|Business)\b/i) || ['', 'Main'])[1];
         const pts = t.match(/([\d,.]+)\s*k?\s*points/i);
-        const tax = t.match(/\+\s*\$([\d,.]+)/);
+        const tax = t.match(/\+\s*\$\s?([\d,.]+)/);
         let miles = 0;
         if (pts) {
           miles = parseFloat(pts[1].replace(/,/g, ''));
@@ -130,18 +131,36 @@ func ScrapeAlaska(profileDir string, headless bool, params scraper.SearchParams)
 		return fail(err)
 	}
 
-	// A route/date with no award space never renders a flight card; Alaska shows
-	// a no-results message instead. Wait for whichever appears. If it was the
-	// no-results message, AlaskaExtractJS finds no cards and returns a valid
-	// {"flights":[]} payload, which the worker stores as a success.
+	// A normal search renders flight cards within a few seconds. A route/date
+	// with no award space renders none — and so does a page that stalled or got
+	// walled. Wait for a card to become visible; on a timeout, give the DOM a
+	// few more seconds and hand off to the extractor regardless. AlaskaExtractJS
+	// returns {"flights":[]} when there are no cards, which the worker stores as
+	// a valid empty result — and its HasResults check then warns, the signal
+	// that a selector may have drifted.
+	//
+	// (Do NOT race the card against a `no flights`-style text locator: Alaska's
+	// results page always carries a hidden "no flights eligible for your
+	// selected upgrade type" <p>, and `card.Or(text).First()` locks onto that
+	// hidden element and times out even when results are present.)
 	card := page.Locator(alaskaCardSel).First()
-	if err := card.Or(page.GetByText(alaskaNoResultsRe)).First().WaitFor(playwright.LocatorWaitForOptions{
+	if err := card.WaitFor(playwright.LocatorWaitForOptions{
 		State:   playwright.WaitForSelectorStateVisible,
 		Timeout: playwright.Float(float64(alaskaResultsWait.Milliseconds())),
 	}); err != nil {
-		return fail(err)
+		slog.Warn("alaska: no flight card became visible; extracting whatever rendered",
+			"airline", "alaska", "err", err)
+		page.WaitForTimeout(4000)
+	} else {
+		// The card skeleton renders a beat before its fare tiles / points
+		// prices, so wait for a price to appear before extracting (best effort —
+		// a genuinely empty result never shows one).
+		_ = page.Locator(`[data-testid="award-price"]`).First().WaitFor(playwright.LocatorWaitForOptions{
+			State:   playwright.WaitForSelectorStateVisible,
+			Timeout: playwright.Float(10000),
+		})
+		page.WaitForTimeout(1500)
 	}
-	page.WaitForTimeout(1500)
 
 	result, err := page.Evaluate(AlaskaExtractJS)
 	if err != nil {
