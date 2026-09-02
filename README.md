@@ -296,55 +296,50 @@ This project is phased intentionally. **Phases 1 and 2 have zero queue infrastru
 
 ## Folder Structure
 
+Current tree (through Phase 3). `internal/api/` + `frontend/` land in Phase 4,
+`monitoring/` in Phase 6.
+
 ```
 cloudmilesscouter/
 ├── cmd/
-│   └── scraper/
-│       └── main.go
+│   ├── scraper/main.go     # one-off: scrape a single route, store to Mongo
+│   ├── producer/main.go    # dispatch one ScrapeJob per airline to Kafka
+│   ├── worker/main.go      # worker pool: Kafka → scrape → Mongo
+│   └── etl/main.go         # Mongo (raw) → Postgres (normalized)
 ├── internal/
 │   ├── scraper/
-│   │   ├── scraper.go
+│   │   ├── scraper.go          # Playwright session (persistent context)
 │   │   └── airlines/
+│   │       ├── airlines.go     # Scrapers registry + HasResults dispatch
 │   │       ├── united.go
 │   │       ├── american.go
-│   │       └── delta.go
+│   │       ├── delta.go
+│   │       └── alaska.go
 │   ├── etl/
 │   │   ├── etl.go
 │   │   └── parsers/
 │   │       ├── united.go
 │   │       ├── american.go
-│   │       └── delta.go
+│   │       ├── delta.go
+│   │       └── alaska.go
 │   ├── storage/
 │   │   ├── mongo.go
 │   │   └── postgres.go
 │   ├── queue/
 │   │   ├── producer.go
 │   │   └── consumer.go
-│   ├── breaker/
-│   │   └── breaker.go
-│   ├── mailotp/
-│   │   └── imap.go
-│   ├── api/
-│   │   ├── router.go
-│   │   └── handlers/
-│   │       └── search.go
-│   └── config/
-│       └── config.go
-├── frontend/
-│   ├── src/
-│   │   ├── components/
-│   │   ├── pages/
-│   │   ├── hooks/
-│   │   └── utils/
-│   └── package.json
+│   ├── breaker/breaker.go
+│   ├── mailotp/imap.go        # IMAP OTP reader (United bootstrap-auto only)
+│   └── config/config.go
 ├── docker/
-│   └── docker-compose.yml
-├── monitoring/
-│   ├── prometheus.yml
-│   └── grafana/
+│   ├── docker-compose.yml
+│   ├── postgres/init/001_schema.sql
+│   └── pgadmin/
+├── docs/
+│   └── schema.md
+├── testdata/samples/         # real scraped payloads, used by the parser tests
 ├── CLAUDE.md
-├── .env
-├── .gitignore
+├── .env                      # gitignored
 ├── go.mod
 ├── go.sum
 └── README.md

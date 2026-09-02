@@ -20,25 +20,27 @@ Working on: Kafka job queue + parallel worker pool for concurrent multi-airline 
 - Containers: Docker + Docker Compose
 
 ## Folder Structure
+Through Phase 3. `internal/api/` + `frontend/` are Phase 4; `monitoring/` is Phase 6.
 ```
 cloudmilesscouter/
-├── cmd/scraper/main.go
+├── cmd/
+│   ├── scraper/main.go     # one-off single-route scrape → Mongo
+│   ├── producer/main.go    # dispatch ScrapeJobs to Kafka
+│   ├── worker/main.go      # worker pool: Kafka → scrape → Mongo
+│   └── etl/main.go         # Mongo → Postgres
 ├── internal/
 │   ├── scraper/scraper.go
-│   ├── scraper/airlines/united.go
+│   ├── scraper/airlines/{airlines,united,american,delta,alaska}.go
 │   ├── etl/etl.go
-│   ├── etl/parsers/united.go
-│   ├── storage/mongo.go
-│   ├── storage/postgres.go
-│   ├── queue/producer.go
-│   ├── queue/consumer.go
+│   ├── etl/parsers/{united,american,delta,alaska}.go
+│   ├── storage/{mongo,postgres}.go
+│   ├── queue/{producer,consumer}.go
 │   ├── breaker/breaker.go
-│   ├── mailotp/imap.go
-│   ├── api/router.go
-│   ├── api/handlers/search.go
+│   ├── mailotp/imap.go     # United bootstrap-auto only
 │   └── config/config.go
-├── frontend/
-├── docker/docker-compose.yml
+├── docker/{docker-compose.yml,postgres/init/001_schema.sql,pgadmin/}
+├── docs/schema.md
+├── testdata/samples/       # real payloads for the parser tests
 ├── CLAUDE.md
 └── README.md
 ```
