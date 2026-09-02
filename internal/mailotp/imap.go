@@ -18,9 +18,31 @@ import (
 	"github.com/emersion/go-message/mail"
 )
 
-// codePattern matches a standalone 4-8 digit code — covers United and most
-// providers' OTP length without hard-coding to exactly 6.
-var codePattern = regexp.MustCompile(`\b(\d{4,8})\b`)
+// OTP matchers, tried in this order so a year ("2026"), account number, or ZIP
+// elsewhere in the message can't be mistaken for the code:
+//  1. a 4-8 digit run right after OTP wording ("code: 123456");
+//  2. a 4-8 digit run right before "is your" / "as your" ("123456 is your ...");
+//  3. fallback: the first standalone 4-8 digit run anywhere.
+var otpMatchers = []*regexp.Regexp{
+	regexp.MustCompile(`(?i)\b(?:code|passcode|one[- ]?time password|one[- ]?time code|verification|security code|otp|pin)\b\D{0,24}(\d{4,8})\b`),
+	regexp.MustCompile(`(?i)\b(\d{4,8})\D{0,20}(?:is your|as your)\b`),
+	regexp.MustCompile(`\b(\d{4,8})\b`),
+}
+
+// findOTPCode pulls the OTP out of one or more text blocks (subject first, then
+// body parts). Each matcher is run against every block before the next matcher
+// is tried, so a keyword-anchored code in the body still beats a stray number
+// in the subject.
+func findOTPCode(texts ...string) string {
+	for _, re := range otpMatchers {
+		for _, t := range texts {
+			if m := re.FindStringSubmatch(t); m != nil {
+				return m[1]
+			}
+		}
+	}
+	return ""
+}
 
 // Config holds the IMAP credentials for the inbox to poll. AppPassword must
 // be a Gmail App Password (myaccount.google.com/apppasswords), not the
@@ -92,20 +114,25 @@ func pollOnce(cfg Config, hint string, since time.Time) (string, error) {
 	messages := make(chan *imap.Message, len(ids))
 	fetchErr := make(chan error, 1)
 	go func() {
-		fetchErr <- c.Fetch(seqset, []imap.FetchItem{imap.FetchEnvelope, section.FetchItem()}, messages)
+		fetchErr <- c.Fetch(seqset, []imap.FetchItem{imap.FetchEnvelope, imap.FetchInternalDate, section.FetchItem()}, messages)
 	}()
 
-	cutoff := since.Add(-1 * time.Minute) // small clock-skew slack
+	cutoff := since.Add(-2 * time.Minute) // clock-skew slack
 	var latest *imap.Message
+	var latestAt time.Time
 	for msg := range messages {
-		if msg.Envelope == nil || msg.Envelope.Date.Before(cutoff) {
+		if msg.Envelope == nil {
+			continue
+		}
+		recv := receivedAt(msg)
+		if recv.Before(cutoff) {
 			continue
 		}
 		if !matches(msg, hint) {
 			continue
 		}
-		if latest == nil || msg.Envelope.Date.After(latest.Envelope.Date) {
-			latest = msg
+		if latest == nil || recv.After(latestAt) {
+			latest, latestAt = msg, recv
 		}
 	}
 	if err := <-fetchErr; err != nil {
@@ -115,6 +142,17 @@ func pollOnce(cfg Config, hint string, since time.Time) (string, error) {
 		return "", nil
 	}
 	return extractCode(latest, section), nil
+}
+
+// receivedAt is the server's receipt time (INTERNALDATE) when present, falling
+// back to the sender's Date header. INTERNALDATE is set by Gmail, not by a
+// possibly-skewed sending client, so it's the reliable basis for "did this
+// arrive after we asked for the code".
+func receivedAt(msg *imap.Message) time.Time {
+	if !msg.InternalDate.IsZero() {
+		return msg.InternalDate
+	}
+	return msg.Envelope.Date
 }
 
 // matches reports whether hint appears in the sender's address/name or the
@@ -136,36 +174,29 @@ func matches(msg *imap.Message, hint string) bool {
 	return false
 }
 
-// extractCode looks in the subject first (some providers put the code right
-// there), then walks the MIME text parts of the body.
+// extractCode gathers the subject and every MIME text part of the body, then
+// hands them to findOTPCode (keyword-anchored first, "any digit run" as a
+// fallback). Collecting all the text before matching means a code in the body
+// beats a stray number in the subject.
 func extractCode(msg *imap.Message, section *imap.BodySectionName) string {
-	if m := codePattern.FindStringSubmatch(msg.Envelope.Subject); m != nil {
-		return m[1]
+	texts := []string{msg.Envelope.Subject}
+
+	if r := msg.GetBody(section); r != nil {
+		if mr, err := mail.CreateReader(r); err == nil {
+			for {
+				part, err := mr.NextPart()
+				if err == io.EOF || err != nil {
+					break
+				}
+				if _, ok := part.Header.(*mail.InlineHeader); !ok {
+					continue // attachment, not a body part
+				}
+				if body, err := io.ReadAll(part.Body); err == nil {
+					texts = append(texts, string(body))
+				}
+			}
+		}
 	}
 
-	r := msg.GetBody(section)
-	if r == nil {
-		return ""
-	}
-	mr, err := mail.CreateReader(r)
-	if err != nil {
-		return "" // not parseable as MIME — skip rather than fail the whole poll
-	}
-	for {
-		part, err := mr.NextPart()
-		if err == io.EOF || err != nil {
-			break
-		}
-		if _, ok := part.Header.(*mail.InlineHeader); !ok {
-			continue // attachment, not a body part
-		}
-		body, err := io.ReadAll(part.Body)
-		if err != nil {
-			continue
-		}
-		if m := codePattern.FindStringSubmatch(string(body)); m != nil {
-			return m[1]
-		}
-	}
-	return ""
+	return findOTPCode(texts...)
 }
