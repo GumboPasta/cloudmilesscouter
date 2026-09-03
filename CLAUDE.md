@@ -4,8 +4,15 @@
 Airline award flight scraper. Scrapes loyalty program websites, stores raw data in MongoDB, normalizes into PostgreSQL, exposes via Go REST API, React frontend on Vercel.
 
 ## Current Phase
-**Phase 4 — REST API**
-Working on: Go + Chi REST API over the normalized PostgreSQL data for the frontend to query
+**Phase 5 — Frontend UI — complete.** React + TS + Tailwind (Vite) app in
+`frontend/`, all 5 steps done: API wiring, search form, sortable/filterable
+results table, UI polish, and the Vercel deploy (project Root Directory
+`frontend`, Node from `.nvmrc`, `VITE_API_BASE_URL` env var). The Go API is still
+local-only (Phase 7 goal), so live award data on the deployed site comes through
+a `cloudflared`/`ngrok` tunnel to the local API for now — see `frontend/README.md`.
+
+**Next: Phase 6 — Observability & Resilience** (Prometheus + Grafana, structured
+JSON logging, DLQ). First infra phase since Phase 4.
 
 ## Tech Stack
 - Language: Go
@@ -20,9 +27,11 @@ Working on: Go + Chi REST API over the normalized PostgreSQL data for the fronte
 - Containers: Docker + Docker Compose
 
 ## Folder Structure
-Through Phase 4 (API in progress). `frontend/` is Phase 5; `monitoring/` is Phase 6.
+Through Phase 5 (frontend built + deployed to Vercel). `monitoring/` is Phase 6.
 ```
 cloudmilesscouter/
+├── frontend/               # Phase 5 — React + TS + Tailwind (Vite), deployed on Vercel (root dir = frontend/, .nvmrc = 22)
+│   └── src/{components,pages,hooks,utils}/  # SearchForm, ResultsTable, Empty/ErrorState; useAwardSearch; utils/api.ts (REST client + types)
 ├── cmd/
 │   ├── scraper/main.go     # one-off single-route scrape → Mongo
 │   ├── producer/main.go    # dispatch ScrapeJobs to Kafka
