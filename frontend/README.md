@@ -70,8 +70,9 @@ subdirectory:
 
 1. **New Project** → import `github.com/GumboPasta/cloudmilesscouter`.
 2. **Root Directory: `frontend`** (required). Framework Preset auto-detects as
-   **Vite** — Build Command `npm run build`, Output Directory `dist`, Install
-   `npm install`. Node comes from `.nvmrc` (22).
+   **Vite** — Build Command `npm run build`, Output Directory `dist`. The
+   committed `package-lock.json` makes the install reproducible (`npm ci`). Node
+   comes from `.nvmrc` (22).
 3. **Environment Variables** → add `VITE_API_BASE_URL` = the public API URL (see
    the caveat below). It's inlined at build time, so a change needs a redeploy.
 4. Deploy. Every push builds a **Preview**; the branch Vercel tracks (`develop`
