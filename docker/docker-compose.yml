@@ -36,6 +36,19 @@ services:
       - ./pgadmin/servers.json:/pgadmin4/servers.json:ro
       - ./pgadmin/pgpass:/pgpass:ro
 
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   zookeeper:
     image: confluentinc/cp-zookeeper:7.7.1
     restart: unless-stopped
@@ -93,6 +106,7 @@ volumes:
   mongo-data:
   postgres-data:
   pgadmin-data:
+  redis-data:
   zookeeper-data:
   zookeeper-log:
   kafka-data:

@@ -156,7 +156,7 @@ func TestPipelineEndToEnd(t *testing.T) {
 	}
 
 	// --- run ETL over everything (also a regression check on the real docs) ---
-	if err := etl.Run(context.Background(), client, pg); err != nil {
+	if err := etl.Run(context.Background(), client, pg, nil); err != nil {
 		t.Fatalf("etl.Run: %v", err)
 	}
 
@@ -266,7 +266,7 @@ func TestETLLatestDocWins(t *testing.T) {
 		}
 	}
 
-	if err := etl.Run(context.Background(), client, pg); err != nil {
+	if err := etl.Run(context.Background(), client, pg, nil); err != nil {
 		t.Fatalf("etl.Run: %v", err)
 	}
 
@@ -380,7 +380,7 @@ func TestETLZeroAwardClearsStaleRows(t *testing.T) {
 	if err := storage.StoreRawScrape(context.Background(), client, withAward); err != nil {
 		t.Fatalf("store raw scrape: %v", err)
 	}
-	if err := etl.Run(context.Background(), client, pg); err != nil {
+	if err := etl.Run(context.Background(), client, pg, nil); err != nil {
 		t.Fatalf("etl.Run (with award): %v", err)
 	}
 	if got := countRows(); got != 1 {
@@ -394,7 +394,7 @@ func TestETLZeroAwardClearsStaleRows(t *testing.T) {
 	if err := storage.StoreRawScrape(context.Background(), client, empty); err != nil {
 		t.Fatalf("store raw scrape: %v", err)
 	}
-	if err := etl.Run(context.Background(), client, pg); err != nil {
+	if err := etl.Run(context.Background(), client, pg, nil); err != nil {
 		t.Fatalf("etl.Run (empty): %v", err)
 	}
 	if got := countRows(); got != 0 {
