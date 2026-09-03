@@ -159,10 +159,58 @@ This project is phased intentionally. **Phases 1 and 2 have zero queue infrastru
 **Running the binaries.** `config.Load()` reads `.env` from the current working
 directory, and the `UNITED_PROFILE_DIR` / `AMERICAN_PROFILE_DIR` / etc. defaults
 (`.united-profile`, …) are relative too. Run `producer` / `worker` / `etl` /
-`scraper` from the repo root, or set `MONGO_URI`, `POSTGRES_URI`,
-`KAFKA_BROKERS`, the `*_PROFILE_DIR` vars, and the United/Gmail creds explicitly
-in the real environment — otherwise you silently get the localhost defaults and
-an empty United credential.
+`scraper` / `api` from the repo root, or set `MONGO_URI`, `POSTGRES_URI`,
+`KAFKA_BROKERS`, `REDIS_ADDR`, the `*_PROFILE_DIR` vars, and the United/Gmail
+creds explicitly in the real environment — otherwise you silently get the
+localhost defaults and an empty United credential. `etl` and `api` both use
+`REDIS_ADDR` (default `localhost:6379`) for the search cache, but neither fails
+if Redis is down.
+
+**Running the API.** Full endpoint reference for the frontend is in
+[`docs/api.md`](docs/api.md); `scripts/smoke_api.sh` curl-tests every endpoint
+plus the cache behaviour against a live stack. `go run ./cmd/api` from the repo
+root starts the REST API on
+`API_PORT` (default `8080`); it connects to Postgres (`POSTGRES_URI`) on boot and
+exits if that fails. `POST /api/scrape` enqueues onto Kafka (`KAFKA_BROKERS`), but
+the writer connects lazily on first use, so a missing broker only fails that one
+endpoint, not startup. `GET /healthz` returns `{"status":"ok"}`. Browser callers
+must be listed in `CORS_ALLOWED_ORIGINS` (comma-separated; default
+`http://localhost:5173` for the Phase 5 Vite dev server); each client IP gets
+`RATE_LIMIT_PER_MINUTE` requests/min (default 120, `0` disables the limiter).
+
+Results are cached in Redis (`REDIS_ADDR`, default `localhost:6379`) for 1 hour,
+keyed by route + date + cabin; the ETL drops a route's cached results when it
+writes a fresh scrape for it. If Redis is unreachable the API still serves,
+reading Postgres on every call.
+
+`GET /api/search?origin=BOS&destination=SFO&date=2026-12-20&cabin=business` — the
+award-search endpoint. `origin`/`destination` (3-letter airport or metro codes,
+matched against the *searched* route codes, not the flight's own airports),
+`date` (`YYYY-MM-DD`) are required; `cabin` (`economy` | `premium_economy` |
+`business` | `first`) is optional and omitting it returns all cabins. Returns a
+JSON array of award options sorted cheapest-first (`points_cost` asc, then
+duration), `200 []` when nothing matches, `400 {"error": ...}` on a bad
+parameter. Served from the Redis cache on a hit (see above); a miss reads
+Postgres and back-fills the cache with a 1h TTL.
+
+`GET /api/airlines` — JSON array of `{code, name}` for every airline present in
+the awards data, ordered by name.
+
+`GET /api/routes` — JSON array of `{origin, destination, award_count,
+last_scraped}` for routes that have award data, most-populated first (there is no
+popularity signal in the schema, so `award_count` stands in for it).
+
+`POST /api/scrape` — trigger a scrape. JSON body `{origin, destination, date,
+airlines?}`; `origin`/`destination` (3-letter codes) and `date` (`YYYY-MM-DD`)
+required, `airlines` optional (defaults to `united, american, delta, alaska`).
+Dispatches one `scrape.jobs` message per airline and returns `202 {"dispatched":
+[...], ...}`; `400 {"error": ...}` on a bad body/param, `502` if the dispatch to
+Kafka fails. It does not wait for the scrape — the worker pool picks the jobs up.
+
+`go test -tags integration ./internal/storage ./internal/api` runs `SearchAwards`,
+`ListAirlines` and `ListRoutes` against a real Postgres, plus the `storage.Cache`
+round-trip and the `/api/search` cache-hit path against a real Redis (needs the
+compose stack up); each test seeds and cleans up its own rows/keys.
 
 **End-to-end smoke test.** `go test -tags e2e ./cmd/worker` runs the whole pipeline — producer → Kafka → worker `process` → MongoDB → ETL → PostgreSQL — with a stub scraper and stub parser, so no browser or live airline site is involved. Needs the compose stack up and `cmd/worker` **not** running (the test joins the real `scrape-workers` group and drains any queued jobs as a setup step). It re-runs the ETL over all real MongoDB docs too, so it also catches ETL regressions on real data.
 
@@ -176,29 +224,29 @@ an empty United credential.
 **✅ Definition of Done:** `GET /api/search?origin=JFK&destination=LAX&date=2025-06-01&cabin=business` returns a sorted JSON list of award options from PostgreSQL.
 
 **Step 1 — Set Up Chi Router**
-- [ ] Initialize Chi router in Go
-- [ ] Add middleware: logging, CORS, rate limiting
+- [x] Initialize Chi router in Go — `internal/api/router.go` (`NewRouter`), served by `cmd/api/main.go` with explicit `http.Server` timeouts + SIGINT/SIGTERM graceful shutdown; `GET /healthz` liveness probe. No `/api/*` endpoints yet (Steps 2–3).
+- [x] Add middleware: logging, CORS, rate limiting — `RequestID` → `RealIP` → structured `slog` request logger → `Recoverer` → CORS (`go-chi/cors`, origins from `CORS_ALLOWED_ORIGINS`, default `http://localhost:5173`) → per-IP rate limit (`go-chi/httprate`, `RATE_LIMIT_PER_MINUTE`, default 120; 0 disables).
 
 **Step 2 — Build Search Endpoint**
-- [ ] `GET /api/search?origin=JFK&destination=LAX&date=2025-01-15&cabin=business`
-- [ ] Query PostgreSQL for matching award results
-- [ ] Check Redis cache first before hitting Postgres
-- [ ] Return sorted JSON response
+- [x] `GET /api/search?origin=JFK&destination=LAX&date=2025-01-15&cabin=business` — `internal/api/search.go`, mounted under `/api` in `router.go`. `origin`/`destination`/`date` required, `cabin` optional (omit → all cabins); bad params return `400 {"error": ...}`.
+- [x] Query PostgreSQL for matching award results — `storage.SearchAwards` (`internal/storage/awards_query.go`): one join over `awards`/`airlines`/`routes`/`cabins`, filtered on the searched route + `search_date` (+ cabin), using the `(route_id, search_date)` index.
+- [x] Check Redis cache first before hitting Postgres — done in **Step 4**: `handleSearch` calls `storage.Cache.GetSearch` before `storage.SearchAwards` and back-fills on a miss.
+- [x] Return sorted JSON response — array ordered by `points_cost ASC`, then `duration_minutes ASC`; no match returns `200 []`.
 
 **Step 3 — Build Supporting Endpoints**
-- [ ] `GET /api/airlines` — list all supported airlines
-- [ ] `GET /api/routes` — list popular routes
-- [ ] `POST /api/scrape` — manually trigger a scrape job
+- [x] `GET /api/airlines` — `internal/api/airlines.go` + `storage.ListAirlines`; the airlines present in the awards data (`SELECT code, name FROM airlines`), ordered by name.
+- [x] `GET /api/routes` — `internal/api/routes.go` + `storage.ListRoutes`; routes that have award data, with an `award_count` and `last_scraped`, most-populated first. No popularity signal exists in the schema, so "popular" ≈ how much data a route has.
+- [x] `POST /api/scrape` — `internal/api/scrape.go`; validates the search and dispatches one `queue.ScrapeJob` per airline onto Kafka (same path as `cmd/producer`), returns `202` with the dispatched list. Fire-and-forget — the worker pool must be running for the scrape to actually happen.
 
 **Step 4 — Add Redis Caching**
-- [ ] Add Redis to Docker Compose
-- [ ] Cache search results for 1 hour
-- [ ] Invalidate cache when new scrape completes
+- [x] Add Redis to Docker Compose — `redis:7-alpine` service on `localhost:6379`, `redis-data` volume, `redis-cli ping` healthcheck.
+- [x] Cache search results for 1 hour — `internal/storage/cache.go` (`storage.Cache`). `GET /api/search` reads Redis first under `search:{origin}:{destination}:{date}:{cabin}` (`cabin` = `any` when unset), on a miss queries Postgres and writes the JSON back with a 1h TTL. A `REDIS_ADDR` that is unreachable at startup is logged and the API runs cache-less (a nil `*storage.Cache` is a no-op), and a Redis error on any single request falls through to Postgres — the cache degrades to slower, never broken.
+- [x] Invalidate cache when new scrape completes — the ETL owns invalidation, since `POST /api/scrape` is fire-and-forget and fresh rows only land when `etl.Run` → `storage.WriteAwards` commits. After the write, `Run` calls `cache.InvalidateRoute` for every route+date it rewrote (its `clearKeys`), deleting all cabin variants. Best-effort: a Redis failure there just leaves those keys to expire on their TTL. `cmd/etl` builds the cache from `REDIS_ADDR`; Redis being down doesn't fail the ETL.
 
 **Step 5 — Test & Validate**
-- [ ] Test all endpoints with Postman or curl
-- [ ] Verify cache hit/miss behavior
-- [ ] Document API endpoints for frontend integration
+- [x] Test all endpoints with Postman or curl — `scripts/smoke_api.sh` curls every endpoint against a live API: `/healthz`, `/api/search` (all-cabins, per-cabin, `200 []` for an empty route, and `400` on each bad param), `/api/airlines`, `/api/routes` (both with order assertions), `POST /api/scrape` (`202` + dispatched list, `400` on bad JSON / unknown field / missing param / all-blank airlines), CORS preflight (allowed vs unlisted origin), and — with `--rate` — the per-IP `429`. 30/30 pass against the compose stack.
+- [x] Verify cache hit/miss behavior — the script clears the Redis key, confirms a miss back-fills it with a ~3600s TTL, a repeat request returns the identical body, and a `go run ./cmd/etl` pass invalidates the key. Graceful degradation checked separately: with `REDIS_ADDR` pointed at a dead port the API logs `redis unreachable, running without a search cache` and still serves `/api/search` `200` from Postgres.
+- [x] Document API endpoints for frontend integration — `docs/api.md`: base URL / env knobs, conventions (auth, error envelope, CORS, rate limiting, `X-Request-Id`), and per-endpoint params, example request/response, field tables, and status codes.
 
 ---
 
@@ -306,8 +354,8 @@ an empty United credential.
 
 ## Folder Structure
 
-Current tree (through Phase 3). `internal/api/` + `frontend/` land in Phase 4,
-`monitoring/` in Phase 6.
+Current tree (through Phase 4). `frontend/` lands in Phase 5, `monitoring/` in
+Phase 6.
 
 ```
 cloudmilesscouter/
@@ -315,7 +363,8 @@ cloudmilesscouter/
 │   ├── scraper/main.go     # one-off: scrape a single route, store to Mongo
 │   ├── producer/main.go    # dispatch one ScrapeJob per airline to Kafka
 │   ├── worker/main.go      # worker pool: Kafka → scrape → Mongo
-│   └── etl/main.go         # Mongo (raw) → Postgres (normalized)
+│   ├── etl/main.go         # Mongo (raw) → Postgres (normalized)
+│   └── api/main.go         # Chi REST API over Postgres (Phase 4)
 ├── internal/
 │   ├── scraper/
 │   │   ├── scraper.go          # Playwright session (persistent context)
@@ -332,9 +381,19 @@ cloudmilesscouter/
 │   │       ├── american.go
 │   │       ├── delta.go
 │   │       └── alaska.go
+│   ├── api/                    # Phase 4 REST API
+│   │   ├── router.go           # Chi router + middleware chain
+│   │   ├── search.go           # GET /api/search
+│   │   ├── airlines.go         # GET /api/airlines
+│   │   ├── routes.go           # GET /api/routes
+│   │   └── scrape.go           # POST /api/scrape → Kafka
 │   ├── storage/
 │   │   ├── mongo.go
-│   │   └── postgres.go
+│   │   ├── postgres.go
+│   │   ├── awards_query.go     # SearchAwards — read path for /api/search
+│   │   ├── airlines_query.go   # ListAirlines — read path for /api/airlines
+│   │   ├── routes_query.go     # ListRoutes — read path for /api/routes
+│   │   └── cache.go            # Redis search cache: read-through + ETL invalidation
 │   ├── queue/
 │   │   ├── producer.go
 │   │   └── consumer.go
@@ -346,7 +405,10 @@ cloudmilesscouter/
 │   ├── postgres/init/001_schema.sql
 │   └── pgadmin/
 ├── docs/
-│   └── schema.md
+│   ├── schema.md
+│   └── api.md                 # REST API reference for the frontend
+├── scripts/
+│   └── smoke_api.sh           # curl smoke test for the REST API
 ├── testdata/samples/         # real scraped payloads, used by the parser tests
 ├── CLAUDE.md
 ├── .env                      # gitignored

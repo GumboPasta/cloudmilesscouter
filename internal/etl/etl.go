@@ -36,7 +36,11 @@ func RegisterParser(airline string, p Parser) {
 // Run reads every raw scrape from MongoDB, keeps only the newest doc per
 // searched route+date, normalizes each via the parser registered for its
 // airline, and writes the results into Postgres.
-func Run(ctx context.Context, client *mongo.Client, db *sql.DB) error {
+//
+// cache may be nil. When set, every route+date whose awards were rewritten this
+// run has its cached /api/search results dropped so the API stops serving the
+// pre-scrape prices.
+func Run(ctx context.Context, client *mongo.Client, db *sql.DB, cache *storage.Cache) error {
 	docs, err := storage.FindRawScrapes(ctx, client)
 	if err != nil {
 		return err
@@ -90,6 +94,16 @@ func Run(ctx context.Context, client *mongo.Client, db *sql.DB) error {
 
 	if err := storage.WriteAwards(ctx, db, awards, clearKeys); err != nil {
 		return err
+	}
+
+	// Best-effort cache invalidation: the awards are already committed, so a
+	// Redis failure here just means those keys serve stale until their TTL.
+	for _, k := range clearKeys {
+		if err := cache.InvalidateRoute(ctx, k); err != nil {
+			slog.Warn("cache invalidation failed", "err", err,
+				"airline", k.AirlineCode, "origin", k.Origin, "destination", k.Destination,
+				"search_date", k.SearchDate.Format("2006-01-02"))
+		}
 	}
 
 	slog.Info("etl run complete", "docs", len(docs), "docs_deduped", len(newest), "keys_parsed", len(clearKeys), "awards_written", len(awards), "docs_skipped", skipped)

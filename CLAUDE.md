@@ -4,8 +4,8 @@
 Airline award flight scraper. Scrapes loyalty program websites, stores raw data in MongoDB, normalizes into PostgreSQL, exposes via Go REST API, React frontend on Vercel.
 
 ## Current Phase
-**Phase 3 — Queue & Worker Pool**
-Working on: Kafka job queue + parallel worker pool for concurrent multi-airline scraping
+**Phase 4 — REST API**
+Working on: Go + Chi REST API over the normalized PostgreSQL data for the frontend to query
 
 ## Tech Stack
 - Language: Go
@@ -13,22 +13,32 @@ Working on: Kafka job queue + parallel worker pool for concurrent multi-airline 
 - Raw storage: MongoDB
 - Structured storage: PostgreSQL
 - Queue: Kafka (Phase 3 — in progress)
-- Cache: Redis (Phase 4+, not yet)
+- Cache: Redis (Phase 4 Step 4 — `internal/storage/cache.go`, caches `/api/search`)
 - API: Go + Chi Router
 - Frontend: React + TypeScript + Tailwind + Vercel
 - Monitoring: Prometheus + Grafana (Phase 6+, not yet)
 - Containers: Docker + Docker Compose
 
 ## Folder Structure
-Through Phase 3. `internal/api/` + `frontend/` are Phase 4; `monitoring/` is Phase 6.
+Through Phase 4 (API in progress). `frontend/` is Phase 5; `monitoring/` is Phase 6.
 ```
 cloudmilesscouter/
 ├── cmd/
 │   ├── scraper/main.go     # one-off single-route scrape → Mongo
 │   ├── producer/main.go    # dispatch ScrapeJobs to Kafka
 │   ├── worker/main.go      # worker pool: Kafka → scrape → Mongo
-│   └── etl/main.go         # Mongo → Postgres
+│   ├── etl/main.go         # Mongo → Postgres
+│   └── api/main.go         # Chi REST API over Postgres (Phase 4)
 ├── internal/
+│   ├── api/router.go       # Chi router + middleware (logging, CORS, rate limit)
+│   ├── api/search.go       # GET /api/search handler
+│   ├── api/airlines.go     # GET /api/airlines handler
+│   ├── api/routes.go       # GET /api/routes handler
+│   ├── api/scrape.go       # POST /api/scrape — dispatches ScrapeJobs to Kafka
+│   ├── storage/awards_query.go    # SearchAwards: read path for /api/search
+│   ├── storage/airlines_query.go  # ListAirlines: read path for /api/airlines
+│   ├── storage/routes_query.go    # ListRoutes: read path for /api/routes
+│   ├── storage/cache.go           # Redis search cache: read-through + ETL invalidation
 │   ├── scraper/scraper.go
 │   ├── scraper/airlines/{airlines,united,american,delta,alaska}.go
 │   ├── etl/etl.go
@@ -39,7 +49,8 @@ cloudmilesscouter/
 │   ├── mailotp/imap.go     # United bootstrap-auto only
 │   └── config/config.go
 ├── docker/{docker-compose.yml,postgres/init/001_schema.sql,pgadmin/}
-├── docs/schema.md
+├── docs/{schema.md,api.md}
+├── scripts/smoke_api.sh    # curl smoke test for the REST API
 ├── testdata/samples/       # real payloads for the parser tests
 ├── CLAUDE.md
 └── README.md

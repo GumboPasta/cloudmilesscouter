@@ -21,9 +21,14 @@ type Config struct {
 	Headless           bool
 	KafkaBrokers       string
 	KafkaGroupID       string
+	RedisAddr          string // host:port for the /api/search read cache (Phase 4)
 	WorkerCount        int
 	MaxAttempts        int           // total scrape tries per job before it is dropped
 	RetryBackoffBase   time.Duration // first retry waits this long; doubles each attempt (capped in the worker)
+
+	APIPort            string   // port cmd/api listens on
+	CORSAllowedOrigins []string // exact origins allowed to call the API from a browser
+	RateLimitPerMinute int      // per-client-IP request budget per minute; 0 disables the limiter
 }
 
 // Load reads .env from the current working directory (not the executable's
@@ -47,9 +52,14 @@ func Load() Config {
 		Headless:           getEnv("HEADLESS", "false") == "true",
 		KafkaBrokers:       getEnv("KAFKA_BROKERS", "localhost:9092"),
 		KafkaGroupID:       getEnv("KAFKA_GROUP_ID", "scrape-workers"),
+		RedisAddr:          getEnv("REDIS_ADDR", "localhost:6379"),
 		WorkerCount:        getEnvInt("WORKER_COUNT", 5),
 		MaxAttempts:        getEnvInt("MAX_SCRAPE_ATTEMPTS", 3),
 		RetryBackoffBase:   getEnvDuration("RETRY_BACKOFF_BASE", 2*time.Second),
+
+		APIPort:            getEnv("API_PORT", "8080"),
+		CORSAllowedOrigins: getEnvList("CORS_ALLOWED_ORIGINS", []string{"http://localhost:5173"}),
+		RateLimitPerMinute: getEnvInt("RATE_LIMIT_PER_MINUTE", 120),
 	}
 }
 
@@ -67,6 +77,25 @@ func getEnvInt(key string, fallback int) int {
 		}
 	}
 	return fallback
+}
+
+// getEnvList reads a comma-separated variable into a slice, trimming spaces and
+// dropping empty entries. An unset or all-empty value yields the fallback.
+func getEnvList(key string, fallback []string) []string {
+	v := os.Getenv(key)
+	if v == "" {
+		return fallback
+	}
+	var out []string
+	for _, part := range strings.Split(v, ",") {
+		if p := strings.TrimSpace(part); p != "" {
+			out = append(out, p)
+		}
+	}
+	if len(out) == 0 {
+		return fallback
+	}
+	return out
 }
 
 func getEnvDuration(key string, fallback time.Duration) time.Duration {

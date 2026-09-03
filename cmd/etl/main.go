@@ -34,7 +34,17 @@ func main() {
 
 	log.Println("PostgreSQL is reachable at", cfg.PostgresURI)
 
-	if err := etl.Run(context.Background(), client, pg); err != nil {
+	// Optional: drop cached /api/search results for the routes this run
+	// rewrites. If Redis is down the ETL still runs; stale keys expire on TTL.
+	var cache *storage.Cache
+	if c, err := storage.NewCache(ctx, cfg.RedisAddr); err != nil {
+		slog.Warn("redis unreachable, skipping cache invalidation", "err", err, "addr", cfg.RedisAddr)
+	} else {
+		cache = c
+		defer cache.Close()
+	}
+
+	if err := etl.Run(context.Background(), client, pg, cache); err != nil {
 		slog.Error("etl run failed", "err", err)
 		os.Exit(1)
 	}
