@@ -175,8 +175,18 @@ exits if that fails. `POST /api/scrape` enqueues onto Kafka (`KAFKA_BROKERS`), b
 the writer connects lazily on first use, so a missing broker only fails that one
 endpoint, not startup. `GET /healthz` returns `{"status":"ok"}`. Browser callers
 must be listed in `CORS_ALLOWED_ORIGINS` (comma-separated; default
-`http://localhost:5173` for the Phase 5 Vite dev server); each client IP gets
+`http://localhost:5173` for the Phase 5 Vite dev server — add the deployed
+frontend's `https://…vercel.app` origin here when serving it); each client IP gets
 `RATE_LIMIT_PER_MINUTE` requests/min (default 120, `0` disables the limiter).
+
+**Running the frontend.** `cd frontend && npm install && npm run dev` starts the
+Vite dev server on `http://localhost:5173` (the API's default CORS origin). It
+reads `VITE_API_BASE_URL` (see `frontend/.env.example`; falls back to
+`http://localhost:8080`), so the Go API needs to be running too. `npm test` runs
+the Vitest suite, `npm run build` type-checks and builds to `dist/`. See
+[`frontend/README.md`](frontend/README.md) — including its **Deploy (Vercel)**
+section (project Root Directory `frontend`, `VITE_API_BASE_URL`, and the
+local-API-tunnel caveat).
 
 Results are cached in Redis (`REDIS_ADDR`, default `localhost:6379`) for 1 hour,
 keyed by route + date + cabin; the ETL drops a route's cached results when it
@@ -253,12 +263,12 @@ compose stack up); each test seeds and cleans up its own rows/keys.
 ### Phase 5 — Frontend UI
 > Goal: Build a clean React frontend that calls the REST API and displays award results.
 
-**✅ Definition of Done:** Searching a route in the browser returns a live results table pulled from the Go API, deployed and accessible on Vercel.
+**✅ Definition of Done:** Searching a route in the browser returns a live results table pulled from the Go API, deployed and accessible on Vercel. *(The Vercel deploy is live; live API data is served through a tunnel to the local API until Phase 7 hosts it — see Step 5.)*
 
 **Step 1 — Initialize React Project**
-- [ ] Create React + TypeScript + Tailwind project with Vite
-- [ ] Set up folder structure: components, pages, hooks, utils
-- [ ] Connect to local Go API via environment variable
+- [x] Create React + TypeScript + Tailwind project with Vite — `frontend/`, Vite 7 + React 19 + Tailwind 4 (`@tailwindcss/vite`, no config file). Dev server pinned to `:5173` to match the API's default `CORS_ALLOWED_ORIGINS`. Vitest + Testing Library for tests.
+- [x] Set up folder structure: components, pages, hooks, utils — `frontend/src/{components,pages,hooks,utils}/`, each with one real file: `utils/api.ts` (REST client + types), `hooks/useApiHealth.ts`, `components/ApiStatusBadge.tsx`, `pages/HomePage.tsx`.
+- [x] Connect to local Go API via environment variable — `VITE_API_BASE_URL` (`frontend/.env.example`; falls back to `http://localhost:8080`). `utils/api.ts` wraps every endpoint in `docs/api.md` and unwraps the `{"error": ...}` envelope into an `ApiError`. `HomePage` shows a live `GET /healthz` reachability badge. `frontend/src/utils/api.test.ts` covers URL/query building and error handling with `fetch` mocked.
 
 **Step 2 — Build Search Form**
 - [ ] Origin airport input (with autocomplete)
@@ -268,22 +278,22 @@ compose stack up); each test seeds and cleans up its own rows/keys.
 - [ ] Submit button that triggers scrape + search
 
 **Step 3 — Build Results Table**
-- [ ] Display airline, route, cabin, points cost, availability
-- [ ] Sort by points cost (ascending by default)
-- [ ] Filter by airline, cabin class, alliance
-- [ ] Loading state while scrape runs
+- [x] Display airline, route, cabin, points cost, availability — `frontend/src/components/ResultsTable.tsx`, one row per `GET /api/search` result: airline, route (`flight_origin→flight_destination` + stops + depart time), cabin, duration, points, `award_type`, taxes. The schema has no seats-remaining field, so `award_type` (`saver` / `dynamic` / …) stands in for "availability".
+- [x] Sort by points cost (ascending by default) — every column header is a sort toggle; the table opens on `points_cost` ascending (matching the API's own order), ties broken by points.
+- [x] Filter by airline, cabin class, alliance — three dropdowns above the table; options are derived from the current results. Alliance isn't in the API response, so it's resolved via a bundled `frontend/src/utils/airlines.ts` map (the four scraped carriers → Star Alliance / oneworld / SkyTeam).
+- [x] Loading state while scrape runs — `HomePage` shows "Searching…" while `useAwardSearch` is in flight (`POST /api/scrape` then `GET /api/search`); the table renders only on success, with an explicit empty state when the route/date has no awards.
 
 **Step 4 — Polish UI**
-- [ ] Responsive design (mobile + desktop)
-- [ ] Empty state when no results found
-- [ ] Error state when scrape fails
-- [ ] CloudMilesScouter branding
+- [x] Responsive design (mobile + desktop) — `max-w-4xl` shell with `sm:` padding steps; the search form already stacks 1-col below `sm`; the results table keeps its columns and scrolls inside an `overflow-x-auto` wrapper (`min-w-[44rem]`, `whitespace-nowrap`) instead of squashing on mobile.
+- [x] Empty state when no results found — `frontend/src/components/EmptyState.tsx`: shown when `GET /api/search` succeeds with `[]`, names the searched route/date/cabin and notes a scrape may still be running. Distinct from `ResultsTable`'s "no rows match these filters" message.
+- [x] Error state when scrape fails — `frontend/src/components/ErrorState.tsx`: a blocking panel with a "Try again" button (re-runs the last search) when `GET /api/search` itself fails. A failed `POST /api/scrape` dispatch is non-blocking — `useAwardSearch` exposes it as `scrapeWarning`, rendered as an amber notice above the (stale) results.
+- [x] CloudMilesScouter branding — `App.tsx` header with a plane wordmark + tagline and a footer (non-commercial disclaimer); `frontend/public/favicon.svg` + `<link>` and a `<meta name="description">` in `index.html`.
 
 **Step 5 — Deploy to Vercel**
-- [ ] Push frontend to GitHub repo
-- [ ] Connect GitHub repo to Vercel
-- [ ] Set environment variable for API URL
-- [ ] Deploy and verify live
+- [x] Push frontend to GitHub repo — `frontend/` committed on `feature/phase-5-implement-frontend-ui`; Node pinned via `frontend/.nvmrc` (22) + `package.json` `engines`.
+- [x] Connect GitHub repo to Vercel — monorepo, so the project's **Root Directory is `frontend`**; Vite preset auto-detects `npm run build` → `dist/`. Steps in [`frontend/README.md`](frontend/README.md#deploy-vercel).
+- [x] Set environment variable for API URL — `VITE_API_BASE_URL` in the Vercel project settings (build-time inlined).
+- [x] Deploy and verify live — the Vercel build + hosting is live. **Live award data needs a reachable API:** the Go API is local-only until Phase 7, so `VITE_API_BASE_URL` points at a `cloudflared`/`ngrok` tunnel to it (and that origin is added to the API's `CORS_ALLOWED_ORIGINS`). Without the tunnel the site loads but shows "API unreachable" / `ErrorState`.
 
 ---
 
@@ -354,11 +364,37 @@ compose stack up); each test seeds and cleans up its own rows/keys.
 
 ## Folder Structure
 
-Current tree (through Phase 4). `frontend/` lands in Phase 5, `monitoring/` in
-Phase 6.
+Current tree (through Phase 5 — frontend built and deployed to Vercel).
+`monitoring/` lands in Phase 6.
 
 ```
 cloudmilesscouter/
+├── frontend/                  # Phase 5 — React + TS + Tailwind (Vite), deployed on Vercel
+│   ├── index.html            # favicon + meta description
+│   ├── package.json          # "engines": node >=20.19
+│   ├── .nvmrc                 # 22 — Vercel + local Node version
+│   ├── vite.config.ts
+│   ├── tsconfig*.json
+│   ├── .env.example           # VITE_API_BASE_URL (+ Vercel prod note)
+│   ├── public/favicon.svg
+│   └── src/
+│       ├── main.tsx
+│       ├── App.tsx            # app shell — header wordmark/tagline + footer
+│       ├── index.css          # @import "tailwindcss"
+│       ├── components/
+│       │   ├── ApiStatusBadge.tsx
+│       │   ├── SearchForm.tsx      # Step 2 — route/date/cabin form
+│       │   ├── ResultsTable.tsx    # Step 3 — sortable + filterable award table
+│       │   ├── EmptyState.tsx      # Step 4 — no-results panel
+│       │   └── ErrorState.tsx      # Step 4 — search-failed panel + retry
+│       ├── pages/HomePage.tsx
+│       ├── hooks/
+│       │   ├── useApiHealth.ts
+│       │   └── useAwardSearch.ts   # POST /api/scrape then GET /api/search; scrapeWarning
+│       └── utils/
+│           ├── api.ts         # REST client + response types
+│           ├── airports.ts    # static airport list for the search autocomplete
+│           └── airlines.ts    # static airline→alliance map for the results filter
 ├── cmd/
 │   ├── scraper/main.go     # one-off: scrape a single route, store to Mongo
 │   ├── producer/main.go    # dispatch one ScrapeJob per airline to Kafka
