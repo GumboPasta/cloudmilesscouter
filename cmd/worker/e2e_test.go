@@ -143,7 +143,7 @@ func TestPipelineEndToEnd(t *testing.T) {
 	if decoded.Airline != e2eAirline {
 		t.Fatalf("fetched an unexpected job for %q after draining", decoded.Airline)
 	}
-	process(fetchCtx, cfg, client, producer, breaker.New(), 0, msg)
+	process(fetchCtx, cfg, client, producer, breaker.New(0, 0), 0, msg)
 
 	// --- assert raw doc landed in mongo ---
 	coll := client.Database("data").Collection("flight_scrapes")

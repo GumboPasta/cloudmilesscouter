@@ -1,8 +1,10 @@
 package api
 
 import (
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"cloudmilesscouter/internal/config"
@@ -30,6 +32,29 @@ func TestHealthz(t *testing.T) {
 	}
 	if ct := resp.Header.Get("Content-Type"); ct != "application/json" {
 		t.Fatalf("Content-Type = %q, want application/json", ct)
+	}
+}
+
+func TestMetricsEndpoint(t *testing.T) {
+	// A tiny rate-limit budget, deliberately exceeded, to prove /metrics is
+	// served from ahead of the limiter.
+	cfg := testConfig()
+	cfg.RateLimitPerMinute = 1
+	handler := NewRouter(cfg, nil, nil, nil)
+
+	for i := 0; i < 3; i++ {
+		rr := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+		req.RemoteAddr = "203.0.113.9:12345"
+		handler.ServeHTTP(rr, req)
+
+		if rr.Code != http.StatusOK {
+			t.Fatalf("request %d: status = %d, want 200", i+1, rr.Code)
+		}
+		body, _ := io.ReadAll(rr.Body)
+		if !strings.Contains(string(body), "go_goroutines") {
+			t.Fatalf("request %d: body is not Prometheus exposition output", i+1)
+		}
 	}
 }
 

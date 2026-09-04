@@ -1,0 +1,13 @@
+# Phase 6 Step 2 — load the checked-in dashboard JSON from disk on boot.
+apiVersion: 1
+
+providers:
+  - name: cloudmilesscouter
+    orgId: 1
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false

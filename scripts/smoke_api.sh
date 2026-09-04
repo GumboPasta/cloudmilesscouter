@@ -74,6 +74,14 @@ echo
 req GET /healthz
 check "GET /healthz" 200 "$STATUS" '.status == "ok"' "$BODY"
 
+# ---------------------------------------------------------------- /metrics (Phase 6)
+# Served from ahead of the chi middleware, so no auth / CORS / rate limit.
+req GET /metrics
+check "GET /metrics" 200 "$STATUS"
+grep -q '^http_requests_total' <<<"$BODY" \
+  && { printf 'PASS  %-45s\n' "/metrics exposes http_requests_total"; ((pass++)); } \
+  || { printf 'FAIL  %-45s\n' "/metrics exposes http_requests_total"; ((fail++)); }
+
 # ---------------------------------------------------------------- /api/search happy paths
 req GET "/api/search?origin=$SEED_O&destination=$SEED_D&date=$SEED_DATE"
 check "GET /api/search (all cabins)" 200 "$STATUS" 'type == "array" and length > 0' "$BODY"

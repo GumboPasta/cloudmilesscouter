@@ -23,12 +23,27 @@ type Config struct {
 	KafkaGroupID       string
 	RedisAddr          string // host:port for the /api/search read cache (Phase 4)
 	WorkerCount        int
-	MaxAttempts        int           // total scrape tries per job before it is dropped
+	MaxAttempts        int           // total scrape tries per job before it is dead-lettered
 	RetryBackoffBase   time.Duration // first retry waits this long; doubles each attempt (capped in the worker)
+	CircuitThreshold   int           // consecutive per-airline scrape failures before the breaker opens (Phase 6 Step 4)
+	CircuitCooldown    time.Duration // how long a per-airline breaker stays open before it allows a probe
+
+	// ScraperForceFailure names airline IDs whose scrape the worker should fail
+	// immediately, without launching a browser. Validation-only knob (Phase 6
+	// Step 5): it lets scripts/validate_resilience.sh simulate an airline outage
+	// on the live stack so the breaker / retry / DLQ path can be observed end to
+	// end. Empty in every normal run.
+	ScraperForceFailure []string
 
 	APIPort            string   // port cmd/api listens on
 	CORSAllowedOrigins []string // exact origins allowed to call the API from a browser
 	RateLimitPerMinute int      // per-client-IP request budget per minute; 0 disables the limiter
+
+	MetricsAddr    string // host:port the worker exposes /metrics on for Prometheus (Phase 6)
+	PushgatewayURL string // Pushgateway base URL the batch ETL pushes its metrics to (Phase 6)
+
+	LogLevel  string // slog level: debug | info | warn | error (Phase 6 Step 3)
+	LogFormat string // slog handler: json (default) | text
 }
 
 // Load reads .env from the current working directory (not the executable's
@@ -56,10 +71,20 @@ func Load() Config {
 		WorkerCount:        getEnvInt("WORKER_COUNT", 5),
 		MaxAttempts:        getEnvInt("MAX_SCRAPE_ATTEMPTS", 3),
 		RetryBackoffBase:   getEnvDuration("RETRY_BACKOFF_BASE", 2*time.Second),
+		CircuitThreshold:   getEnvInt("CIRCUIT_BREAKER_THRESHOLD", 5),
+		CircuitCooldown:    getEnvDuration("CIRCUIT_BREAKER_COOLDOWN", 60*time.Second),
+
+		ScraperForceFailure: getEnvList("SCRAPER_FORCE_FAILURE", nil),
 
 		APIPort:            getEnv("API_PORT", "8080"),
 		CORSAllowedOrigins: getEnvList("CORS_ALLOWED_ORIGINS", []string{"http://localhost:5173"}),
 		RateLimitPerMinute: getEnvInt("RATE_LIMIT_PER_MINUTE", 120),
+
+		MetricsAddr:    getEnv("METRICS_ADDR", ":2112"),
+		PushgatewayURL: getEnv("PUSHGATEWAY_URL", "http://localhost:9091"),
+
+		LogLevel:  getEnv("LOG_LEVEL", "info"),
+		LogFormat: getEnv("LOG_FORMAT", "json"),
 	}
 }
 

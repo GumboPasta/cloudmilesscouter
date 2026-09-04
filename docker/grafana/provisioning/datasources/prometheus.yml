@@ -1,0 +1,13 @@
+# Phase 6 Step 2 — Grafana's Prometheus datasource, provisioned on boot.
+# "prometheus" is the compose service name; Grafana reaches it over the compose
+# network. The fixed uid lets the checked-in dashboard reference it statically.
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    uid: prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false

@@ -4,12 +4,14 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"log"
 	"log/slog"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"cloudmilesscouter/internal/config"
+	"cloudmilesscouter/internal/logging"
 	"cloudmilesscouter/internal/mailotp"
 	"cloudmilesscouter/internal/scraper"
 	"cloudmilesscouter/internal/scraper/airlines"
@@ -18,6 +20,7 @@ import (
 
 func main() {
 	cfg := config.Load()
+	logging.Setup("scraper", cfg.LogLevel, cfg.LogFormat)
 
 	if len(os.Args) > 1 && os.Args[1] == "bootstrap" {
 		if err := airlines.Bootstrap(cfg.UnitedProfileDir); err != nil {
@@ -39,24 +42,33 @@ func main() {
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	// Graceful shutdown: SIGINT/SIGTERM cancels connections and the post-scrape
+	// store. A scrape already running in the browser cannot be interrupted (the
+	// scraper functions take no context) — the signal takes effect at the next
+	// checkpoint.
+	rootCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	ctx, cancel := context.WithTimeout(rootCtx, 5*time.Second)
 	defer cancel()
 
 	client, err := storage.Connect(ctx, cfg.MongoURI)
 	if err != nil {
-		log.Fatalf("mongo connection failed: %v", err)
+		slog.Error("mongo connection failed", "err", err)
+		os.Exit(1)
 	}
 	defer client.Disconnect(context.Background())
 
-	log.Println("MongoDB is reachable at", cfg.MongoURI)
+	slog.Info("mongo reachable", "uri", cfg.MongoURI)
 
 	pg, err := storage.ConnectPostgres(ctx, cfg.PostgresURI)
 	if err != nil {
-		log.Fatalf("postgres connection failed: %v", err)
+		slog.Error("postgres connection failed", "err", err)
+		os.Exit(1)
 	}
 	defer pg.Close()
 
-	log.Println("PostgreSQL is reachable at", cfg.PostgresURI)
+	slog.Info("postgres reachable", "uri", cfg.PostgresURI)
 
 	fs := flag.NewFlagSet("scrape", flag.ExitOnError)
 	airline := fs.String("airline", "united", "airline ID to scrape (must be registered in airlines.Scrapers)")
@@ -92,6 +104,11 @@ func main() {
 		os.Exit(1)
 	}
 
+	if rootCtx.Err() != nil {
+		slog.Warn("interrupted after scrape, not storing", "airline", *airline)
+		os.Exit(1)
+	}
+
 	doc := storage.RawScrape{
 		Airline:     *airline,
 		Origin:      *origin,
@@ -100,7 +117,12 @@ func main() {
 		ScrapedAt:   time.Now(),
 		RawPayload:  string(body),
 	}
-	if err := storage.StoreRawScrape(context.Background(), client, doc); err != nil {
+	// context.Background() with a 10s bound, not rootCtx: don't let a Ctrl-C
+	// land after a 30-45s scrape and throw the result away, but don't hang on a
+	// wedged Mongo either.
+	storeCtx, storeCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer storeCancel()
+	if err := storage.StoreRawScrape(storeCtx, client, doc); err != nil {
 		slog.Error("store failed", "err", err)
 		os.Exit(1)
 	}

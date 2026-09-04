@@ -20,6 +20,13 @@ optional at startup — see *Caching* and `POST /api/scrape` below.
 | `KAFKA_BROKERS` | `localhost:9092` | `POST /api/scrape` target |
 | `CORS_ALLOWED_ORIGINS` | `http://localhost:5173` | comma-separated exact origins allowed from a browser |
 | `RATE_LIMIT_PER_MINUTE` | `120` | per-client-IP budget; `0` disables the limiter |
+| `METRICS_ADDR` | `:2112` | (worker only) `host:port` its `/metrics` listener binds — the API serves `/metrics` on `API_PORT` |
+| `PUSHGATEWAY_URL` | `http://localhost:9091` | (ETL only) Pushgateway the batch ETL pushes its metrics to on completion |
+| `CIRCUIT_BREAKER_THRESHOLD` | `5` | (worker only) consecutive per-airline scrape failures before the breaker opens |
+| `CIRCUIT_BREAKER_COOLDOWN` | `60s` | (worker only) how long the breaker stays open before letting one probe job through |
+| `SCRAPER_FORCE_FAILURE` | (empty) | (worker only) comma-separated airline IDs whose scrape fails instantly, no browser — resilience-validation knob (Phase 6 Step 5), unset in normal runs |
+| `LOG_LEVEL` | `info` | slog level: `debug` \| `info` \| `warn` \| `error` |
+| `LOG_FORMAT` | `json` | slog handler: `json` (one JSON object per line) \| `text` for local dev |
 
 ## Conventions
 
@@ -35,8 +42,12 @@ optional at startup — see *Caching* and `POST /api/scrape` below.
   origin gets no `Access-Control-Allow-Origin` header (the browser blocks it).
 - **Rate limiting:** past `RATE_LIMIT_PER_MINUTE` requests/min a client IP gets
   `429 Too Many Requests` until the window rolls over.
-- **Request ID:** every response has an `X-Request-Id` header, echoed in the
-  server's structured log line for that request.
+- **Request ID:** every response has an `X-Request-Id` header, echoed as
+  `request_id` in the server's structured log line for that request.
+- **Logging:** every service logs one JSON object per line to stderr (`LOG_FORMAT`,
+  `LOG_LEVEL` above), each carrying a `service` field (`api`, `worker`, `etl`, …).
+  The API emits a `request` line per call with method, path, status, duration,
+  `request_id`, and `remote`.
 
 ---
 
@@ -50,6 +61,44 @@ $ curl -s localhost:8080/healthz
 ```
 
 `200` always (if the process is up).
+
+---
+
+## `GET /metrics`
+
+Prometheus exposition format (Phase 6). Served from ahead of the chi middleware,
+so it has **no** CORS, rate limiting, request logging, or `X-Request-Id`, and it
+is not itself counted in `http_requests_total`.
+
+```
+$ curl -s localhost:8080/metrics | grep '^http_requests_total'
+http_requests_total{method="GET",route="/api/search",status="200"} 2
+```
+
+Series exposed by the API: `http_requests_total` and
+`http_request_duration_seconds` (labelled by method + chi route pattern, so a
+sprayed random path lands on `unmatched`, not its own series) and
+`search_cache_requests_total{result="hit"|"miss"}` for the `/api/search` cache
+hit rate. The **worker** exposes its own endpoint on `METRICS_ADDR` with
+`scrape_attempts_total`, `scrape_failures_total{airline,reason}`,
+`scrape_duration_seconds`, `scrape_empty_results_total`, `kafka_consumer_lag`,
+`scrape_circuit_state{airline}` (0 closed / 1 open / 2 half-open, Phase 6 Step 4)
+and `dlq_messages_total{airline,reason}` (jobs written to the dead-letter topic).
+The **ETL** pushes `etl_parse_failures_total{airline}` (plus run context) to the
+Pushgateway. `docker/prometheus/prometheus.yml` scrapes all three.
+
+**Grafana** (Phase 6 Step 2) reads these from Prometheus: `docker compose ... up
+-d grafana` serves it on `localhost:3000` (anonymous Viewer) with the datasource
+and the **CloudMilesScouter** dashboard provisioned from `docker/grafana/` — API
+performance, scraper health, and queue-depth/ETL panels over the series above.
+
+`scripts/validate_resilience.sh` (Phase 6 Step 5) drives the breaker, DLQ, and
+Grafana-freshness checks end to end against a live stack: run the worker with
+`SCRAPER_FORCE_FAILURE=<airline>`, then the script fires repeated scrapes and
+asserts `scrape_circuit_state` opens, Prometheus is scraping the worker, and
+`scrape.jobs.dlq` fills with `DeadLetterJob`s.
+
+`200` always.
 
 ---
 

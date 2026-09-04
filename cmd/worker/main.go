@@ -8,17 +8,20 @@
 // Delivery is at-most-once: the fetch loop commits each message before handing
 // it to a worker, so a crash mid-scrape does not redeliver the job.
 //
-// Failure handling (Step 5): a failed scrape or store is re-queued as a fresh
-// message with an incremented attempt count after an exponential backoff, up to
-// cfg.MaxAttempts tries, then dropped with a structured "giving up" log (a
-// dead-letter topic is Phase 6). A per-airline circuit breaker fails jobs fast
-// for a cooldown once an airline site has failed repeatedly, so the pool stops
-// launching browsers at a site that is down.
+// Failure handling: a failed scrape or store is re-queued as a fresh message
+// with an incremented attempt count after an exponential backoff, up to
+// cfg.MaxAttempts tries, then written to the scrape.jobs.dlq dead-letter topic
+// with the failure reason and last error (Phase 6 Step 4). A per-airline
+// circuit breaker (closed → open → half-open) fails jobs fast for a cooldown
+// once an airline site has failed repeatedly, then lets a single probe job
+// through before fully closing again, so the pool stops launching browsers at a
+// site that is down. Poison (undecodable) messages are logged and dropped, not
+// dead-lettered.
 package main
 
 import (
 	"context"
-	"log"
+	"errors"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -32,6 +35,8 @@ import (
 
 	"cloudmilesscouter/internal/breaker"
 	"cloudmilesscouter/internal/config"
+	"cloudmilesscouter/internal/logging"
+	"cloudmilesscouter/internal/metrics"
 	"cloudmilesscouter/internal/queue"
 	"cloudmilesscouter/internal/scraper"
 	"cloudmilesscouter/internal/scraper/airlines"
@@ -48,16 +53,18 @@ const ioTimeout = 10 * time.Second
 
 func main() {
 	cfg := config.Load()
+	logging.Setup("worker", cfg.LogLevel, cfg.LogFormat)
 
 	connectCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
 	client, err := storage.Connect(connectCtx, cfg.MongoURI)
 	if err != nil {
-		log.Fatalf("mongo connection failed: %v", err)
+		slog.Error("mongo connection failed", "err", err)
+		os.Exit(1)
 	}
 	defer client.Disconnect(context.Background())
-	log.Println("MongoDB is reachable at", cfg.MongoURI)
+	slog.Info("mongo reachable", "uri", cfg.MongoURI)
 
 	consumer := queue.NewConsumer(cfg.KafkaBrokers, cfg.KafkaGroupID)
 	defer consumer.Close()
@@ -66,13 +73,25 @@ func main() {
 	producer := queue.NewProducer(cfg.KafkaBrokers)
 	defer producer.Close()
 
-	brk := breaker.New()
+	brk := breaker.New(cfg.CircuitThreshold, cfg.CircuitCooldown)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	// Prometheus scrape target (Phase 6). The worker is not otherwise an HTTP
+	// server, so it runs a bare /metrics listener. A bind failure is logged and
+	// the pool carries on unmonitored rather than exiting.
+	go func() {
+		if err := metrics.ListenAndServe(cfg.MetricsAddr); err != nil {
+			slog.Error("metrics listener stopped", "err", err, "addr", cfg.MetricsAddr)
+		}
+	}()
+	go publishLag(ctx, consumer)
+
 	slog.Info("worker pool started", "workers", cfg.WorkerCount, "brokers", cfg.KafkaBrokers,
-		"group", cfg.KafkaGroupID, "max_attempts", cfg.MaxAttempts, "retry_backoff_base", cfg.RetryBackoffBase.String())
+		"group", cfg.KafkaGroupID, "max_attempts", cfg.MaxAttempts, "retry_backoff_base", cfg.RetryBackoffBase.String(),
+		"circuit_threshold", cfg.CircuitThreshold, "circuit_cooldown", cfg.CircuitCooldown.String(),
+		"metrics_addr", cfg.MetricsAddr, "force_failure", strings.Join(cfg.ScraperForceFailure, ","))
 
 	// One fetch loop feeds an unbuffered channel that the workers drain. The loop
 	// blocks on the handoff until a worker is free, so it stays exactly in step
@@ -158,26 +177,45 @@ func process(ctx context.Context, cfg config.Config, client *mongo.Client, produ
 	// re-dispatches searches on its own cadence, so a dropped job comes back on
 	// the next dispatch, after the cooldown has had a chance to pass.
 	if !brk.Allow(job.Airline) {
+		recordCircuitState(brk, job.Airline)
 		logJob.Warn("circuit open for airline, dropping job", "reason", "circuit_open")
 		return
 	}
+	if brk.State(job.Airline) == breaker.HalfOpen {
+		logJob.Info("circuit half-open, probing airline with this job")
+	}
+	recordCircuitState(brk, job.Airline)
 
 	logJob.Info("job started")
-	body, err := scrapeFn(cfg, scraper.SearchParams{
-		Origin:      job.Origin,
-		Destination: job.Destination,
-		Date:        date,
-	})
+	metrics.ScrapeAttemptsTotal.WithLabelValues(job.Airline).Inc()
+	start := time.Now()
+	var body []byte
+	if forceFailure(cfg, job.Airline) {
+		// Phase 6 Step 5 validation knob: fail as if the airline site were down,
+		// without launching a browser. "blocked" so classify() buckets it as an
+		// outage on the scraper-health panels.
+		err = errors.New("forced scrape failure: airline site blocked (SCRAPER_FORCE_FAILURE)")
+	} else {
+		body, err = scrapeFn(cfg, scraper.SearchParams{
+			Origin:      job.Origin,
+			Destination: job.Destination,
+			Date:        date,
+		})
+	}
+	metrics.ScrapeDuration.WithLabelValues(job.Airline).Observe(time.Since(start).Seconds())
 	if err != nil {
 		reason := classify(err)
+		metrics.ScrapeFailuresTotal.WithLabelValues(job.Airline, reason).Inc()
 		if brk.RecordFailure(job.Airline) {
-			logJob.Warn("circuit opened for airline", "cooldown", breaker.Cooldown.String())
+			logJob.Warn("circuit opened for airline", "cooldown", cfg.CircuitCooldown.String())
 		}
+		recordCircuitState(brk, job.Airline)
 		logJob.Error("scrape failed", "err", err, "reason", reason)
-		retry(ctx, cfg, producer, logJob, job, reason)
+		retry(ctx, cfg, producer, logJob, job, reason, err.Error())
 		return
 	}
 	brk.RecordSuccess(job.Airline)
+	recordCircuitState(brk, job.Airline)
 
 	doc := storage.RawScrape{
 		Airline:     job.Airline,
@@ -195,8 +233,9 @@ func process(ctx context.Context, cfg config.Config, client *mongo.Client, produ
 	err = storage.StoreRawScrape(storeCtx, client, doc)
 	cancel()
 	if err != nil {
+		metrics.ScrapeFailuresTotal.WithLabelValues(job.Airline, "store").Inc()
 		logJob.Error("store failed", "err", err, "reason", "store")
-		retry(ctx, cfg, producer, logJob, job, "store")
+		retry(ctx, cfg, producer, logJob, job, "store", err.Error())
 		return
 	}
 
@@ -207,20 +246,48 @@ func process(ctx context.Context, cfg config.Config, client *mongo.Client, produ
 	if hasResults, err := airlines.HasResultsFor(job.Airline, body); err != nil {
 		logJob.Warn("could not determine result count", "err", err)
 	} else if !hasResults {
+		metrics.ScrapeEmptyResultsTotal.WithLabelValues(job.Airline).Inc()
 		logJob.Warn("scrape stored an empty result set", "reason", "empty_result")
 	}
 
 	logJob.Info("job done", "bytes", len(body))
 }
 
+// jobRequeuer is the subset of *queue.Producer the retry path uses: re-enqueue a
+// job for another attempt, or dead-letter it once attempts are exhausted. The
+// interface lets the worker tests inject a fake.
+type jobRequeuer interface {
+	Enqueue(ctx context.Context, job queue.ScrapeJob) error
+	DeadLetter(ctx context.Context, dl queue.DeadLetterJob) error
+}
+
+// recordCircuitState publishes the breaker's current state for airline to the
+// scrape_circuit_state gauge (0 closed, 1 open, 2 half-open).
+func recordCircuitState(brk *breaker.Breaker, airline string) {
+	metrics.ScrapeCircuitState.WithLabelValues(airline).Set(float64(brk.State(airline)))
+}
+
+// forceFailure reports whether airline is named in cfg.ScraperForceFailure — the
+// Phase 6 Step 5 validation knob that fails a scrape without launching a browser
+// so the breaker / retry / DLQ path can be exercised on the live stack.
+func forceFailure(cfg config.Config, airline string) bool {
+	for _, a := range cfg.ScraperForceFailure {
+		if a == airline {
+			return true
+		}
+	}
+	return false
+}
+
 // retry re-queues job as a fresh message with an incremented attempt after an
-// exponential backoff, or drops it once cfg.MaxAttempts tries are used up. The
-// original message is already committed (at-most-once), so if ctx is cancelled
-// during the backoff or the enqueue fails, the job is simply dropped.
-func retry(ctx context.Context, cfg config.Config, producer *queue.Producer, logJob *slog.Logger, job queue.ScrapeJob, reason string) {
+// exponential backoff, or dead-letters it once cfg.MaxAttempts tries are used
+// up. The original message is already committed (at-most-once), so if ctx is
+// cancelled during the backoff or the enqueue fails, the job is simply dropped.
+func retry(ctx context.Context, cfg config.Config, producer jobRequeuer, logJob *slog.Logger, job queue.ScrapeJob, reason, errMsg string) {
 	next := job.Attempt + 1
 	if next >= cfg.MaxAttempts {
 		logJob.Error("job failed permanently, giving up", "reason", reason, "attempts", next)
+		deadLetter(producer, logJob, job, reason, errMsg, next)
 		return
 	}
 
@@ -244,6 +311,27 @@ func retry(ctx context.Context, cfg config.Config, producer *queue.Producer, log
 	}
 }
 
+// deadLetter writes a permanently failed job to the scrape.jobs.dlq topic with
+// the failure context. context.Background() with the same 10s ceiling as the
+// re-enqueue: a DLQ write should survive shutdown but not hang on a broker
+// outage. If it fails the job is lost — there is nowhere left to put it.
+func deadLetter(producer jobRequeuer, logJob *slog.Logger, job queue.ScrapeJob, reason, errMsg string, attempts int) {
+	dlqCtx, cancel := context.WithTimeout(context.Background(), ioTimeout)
+	defer cancel()
+	err := producer.DeadLetter(dlqCtx, queue.DeadLetterJob{
+		Job:      job,
+		Reason:   reason,
+		Attempts: attempts,
+		Error:    errMsg,
+		FailedAt: time.Now(),
+	})
+	if err != nil {
+		logJob.Error("dead-letter write failed, job lost", "err", err, "reason", reason)
+		return
+	}
+	metrics.DLQMessagesTotal.WithLabelValues(job.Airline, reason).Inc()
+}
+
 // backoff returns base doubled once per prior attempt, capped at maxBackoff.
 // attempt is the count of tries already made (0 for the first retry).
 func backoff(base time.Duration, attempt int) time.Duration {
@@ -252,6 +340,23 @@ func backoff(base time.Duration, attempt int) time.Duration {
 		return maxBackoff
 	}
 	return d
+}
+
+// publishLag refreshes the kafka_consumer_lag gauge every 15s (one Prometheus
+// scrape interval) from the reader's stats. kafka-go only recomputes lag on a
+// fetch, so the gauge tracks the last message the pool pulled — good enough to
+// watch the queue back up while the workers are busy. It returns on shutdown.
+func publishLag(ctx context.Context, consumer *queue.Consumer) {
+	ticker := time.NewTicker(15 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			metrics.KafkaConsumerLag.WithLabelValues(queue.Topic).Set(float64(consumer.Lag()))
+		}
+	}
 }
 
 // classify buckets a scrape error into a coarse reason for structured logging.
