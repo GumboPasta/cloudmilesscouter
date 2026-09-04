@@ -6,10 +6,13 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	"cloudmilesscouter/internal/config"
+	"cloudmilesscouter/internal/logging"
 	"cloudmilesscouter/internal/queue"
 )
 
@@ -20,6 +23,7 @@ var defaultAirlines = []string{"united", "american", "delta", "alaska"}
 
 func main() {
 	cfg := config.Load()
+	logging.Setup("producer", cfg.LogLevel, cfg.LogFormat)
 
 	fs := flag.NewFlagSet("producer", flag.ExitOnError)
 	origin := fs.String("origin", "", `origin IATA airport/metro code, e.g. "DFW"`)
@@ -52,25 +56,37 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Graceful shutdown: SIGINT/SIGTERM cancels the in-flight Enqueue and stops
+	// the loop, so Ctrl-C between jobs leaves the writer to flush via defer
+	// rather than tearing it down mid-write.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
 	p := queue.NewProducer(cfg.KafkaBrokers)
 	defer p.Close()
 
-	failed := 0
+	failed, dispatched := 0, 0
 	for _, airline := range airlines {
+		if ctx.Err() != nil {
+			slog.Warn("interrupted, stopping dispatch", "dispatched", dispatched, "remaining", len(airlines)-dispatched-failed)
+			break
+		}
 		job := queue.ScrapeJob{
 			Airline:     airline,
 			Origin:      *origin,
 			Destination: *destination,
 			Date:        *date,
 		}
-		if err := p.Enqueue(context.Background(), job); err != nil {
+		if err := p.Enqueue(ctx, job); err != nil {
 			slog.Error("dispatch failed", "airline", airline, "err", err)
 			failed++
+			continue
 		}
+		dispatched++
 	}
 
-	if failed > 0 {
-		slog.Error("some jobs failed to dispatch", "failed", failed, "total", len(airlines))
+	if failed > 0 || ctx.Err() != nil {
+		slog.Error("not all jobs dispatched", "dispatched", dispatched, "failed", failed, "total", len(airlines))
 		os.Exit(1)
 	}
 

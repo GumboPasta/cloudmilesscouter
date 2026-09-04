@@ -28,7 +28,8 @@ This project is phased intentionally. **Phases 1 and 2 have zero queue infrastru
 | API | Go + Chi Router |
 | Frontend | React + TypeScript + Tailwind |
 | Frontend Deploy | Vercel |
-| Monitoring | Prometheus + Grafana *(Phase 6+)* |
+| Monitoring | Prometheus *(Phase 6 Step 1)* + Grafana *(Phase 6 Step 2)* |
+| Logging | `slog` structured JSON *(Phase 6 Step 3)* |
 | Containerization | Docker + Docker Compose |
 
 ---
@@ -115,7 +116,7 @@ This project is phased intentionally. **Phases 1 and 2 have zero queue infrastru
 
 **Step 1 — Set Up Kafka**
 - [x] Add Kafka + Zookeeper to Docker Compose
-- [x] Create topic: `scrape.jobs` (created on boot by a one-shot `kafka-init` service; 3 partitions, replication-factor 1)
+- [x] Create topic: `scrape.jobs` (created on boot by a one-shot `kafka-init` service; 3 partitions, replication-factor 1). Phase 6 Step 4 adds `scrape.jobs.dlq` (1 partition) to the same one-shot.
 - [x] Verify Kafka boots and accepts messages
 
 **Step 2 — Build Job Producer**
@@ -136,8 +137,8 @@ This project is phased intentionally. **Phases 1 and 2 have zero queue infrastru
 - [x] Test all four running in parallel via worker pool — one `producer` search fans out to 4 jobs; the worker pool scrapes American, Delta and Alaska concurrently and all land in MongoDB → ETL → PostgreSQL. (United's login expired mid-Phase 3 — see the note below Step 6 for the fix and why United needs a login at all, unlike the other three.)
 
 **Step 5 — Add Circuit Breakers & Retry Logic**
-- [x] If airline site is down, fail gracefully — in-memory per-airline circuit breaker (`internal/breaker`): after 5 consecutive failures for an airline (kept above `MAX_SCRAPE_ATTEMPTS` so one job's own retry run can't trip it), its jobs are dropped fast for a 60s cooldown instead of launching a browser; the producer re-dispatches on its next cadence
-- [x] Re-queue failed jobs with exponential backoff — worker re-enqueues a failed scrape/store with an incremented `attempt` after `RETRY_BACKOFF_BASE` × 2ⁿ (capped 30s), up to `MAX_SCRAPE_ATTEMPTS` (3) tries, then drops it with a "giving up" log. Kafka dead-letter topic deferred to Phase 6.
+- [x] If airline site is down, fail gracefully — in-memory per-airline circuit breaker (`internal/breaker`): after 5 consecutive failures for an airline (kept above `MAX_SCRAPE_ATTEMPTS` so one job's own retry run can't trip it), its jobs are dropped fast for a 60s cooldown instead of launching a browser; the producer re-dispatches on its next cadence. (Phase 6 Step 4 adds the half-open probe state + metrics + config knobs.)
+- [x] Re-queue failed jobs with exponential backoff — worker re-enqueues a failed scrape/store with an incremented `attempt` after `RETRY_BACKOFF_BASE` × 2ⁿ (capped 30s), up to `MAX_SCRAPE_ATTEMPTS` (3) tries, then (Phase 6 Step 4) writes it to the `scrape.jobs.dlq` dead-letter topic.
 - [x] Log failure reason with structured logging — every failure/re-queue line carries a coarse `reason` (`timeout`, `blocked`, `browser`, `store`, `circuit_open`, `other`) via `slog`
 
 **Step 6 — Test & Validate**
@@ -165,6 +166,57 @@ creds explicitly in the real environment — otherwise you silently get the
 localhost defaults and an empty United credential. `etl` and `api` both use
 `REDIS_ADDR` (default `localhost:6379`) for the search cache, but neither fails
 if Redis is down.
+
+**Metrics (Phase 6).** The `api` exposes Prometheus metrics at `/metrics` on
+`API_PORT`; the `worker` runs a dedicated `/metrics` listener on `METRICS_ADDR`
+(default `:2112`); the `etl` pushes its counters to `PUSHGATEWAY_URL` (default
+`http://localhost:9091`) once per run. `docker compose -f
+docker/docker-compose.yml up -d prometheus pushgateway grafana` brings up
+Prometheus on `localhost:9090` and Grafana on `localhost:3000` — Prometheus's
+targets and the metric names are in [`docs/api.md`](docs/api.md#get-metrics). None
+of the three binaries fail if the Pushgateway or a scrape target is unreachable.
+
+**Logging (Phase 6 Step 3).** Every Go binary logs one JSON object per line to
+stderr, each carrying a `service` field (`api`, `worker`, `etl`, `scraper`,
+`producer`). `LOG_LEVEL` (`debug` | `info` | `warn` | `error`, default `info`)
+and `LOG_FORMAT` (`json` default, or `text` for readable local runs) control it.
+`internal/logging.Setup` wires this up as the `slog` default in each `main`, so
+lines from the internal packages carry the same shape. Key events: the scrapers
+log `scrape started` / `scrape succeeded` / `scrape failed`; the worker logs
+`job started` / `job done`, retries (`re-queueing job after backoff`,
+`job failed permanently, giving up` → `dead-lettered job`), and `circuit opened
+for airline` / `circuit half-open, probing airline`; the API logs one `request`
+line per call.
+
+**Resilience (Phase 6 Step 4).** Per-airline circuit breaker (`internal/breaker`,
+closed → open → half-open): `CIRCUIT_BREAKER_THRESHOLD` (5) consecutive failures
+open it, jobs are then dropped fast for `CIRCUIT_BREAKER_COOLDOWN` (60s), and the
+first job after the cooldown probes as half-open — success closes it, failure
+re-opens it for another cooldown. The worker exposes the state as
+`scrape_circuit_state{airline}` (0/1/2). Permanently failed jobs (retries
+exhausted) are written to the `scrape.jobs.dlq` Kafka topic with their failure
+reason and last error, and counted by `dlq_messages_total{airline,reason}`;
+inspect it with `kafka-console-consumer ... --topic scrape.jobs.dlq
+--from-beginning`. Every binary handles SIGINT/SIGTERM gracefully — the API drains
+in-flight requests, the worker finishes in-flight scrapes before exiting, the
+producer stops its dispatch loop, and the ETL cancels mid-run (transactional, so
+it rolls back).
+
+**Validating it (Phase 6 Step 5).** The worker reads `SCRAPER_FORCE_FAILURE` (a
+comma-separated airline list) and fails those scrapes immediately without a
+browser, so an outage can be simulated on the live stack. Run the worker with it
+set and logging to a file, then `scripts/validate_resilience.sh` (see its header
+for prereqs and knobs; `--half-open` also waits out the cooldown to check the
+probe). `go test -tags e2e -run TestResilience ./cmd/worker` covers the
+closed→open→half-open walk and the DLQ write deterministically against a live
+Kafka.
+
+**Dashboards (Phase 6 Step 2).** Grafana at `localhost:3000` opens straight onto
+the **CloudMilesScouter** dashboard (anonymous Viewer; admin `admin`/`admin` for
+edits). Its Prometheus datasource and the dashboard JSON are provisioned from
+`docker/grafana/` on boot — no manual setup. Panels are grouped API performance /
+scraper health / queue depth + ETL; they stay empty until the `api` and `worker`
+are running on the host for Prometheus to scrape.
 
 **Running the API.** Full endpoint reference for the frontend is in
 [`docs/api.md`](docs/api.md); `scripts/smoke_api.sh` curl-tests every endpoint
@@ -300,31 +352,43 @@ compose stack up); each test seeds and cleans up its own rows/keys.
 ### Phase 6 — Observability & Resilience
 > Goal: Make the system production-grade with monitoring, alerting, and robust error handling.
 
-**✅ Definition of Done:** Grafana dashboard shows scraper health, queue depth, and API latency in real time. Circuit breakers fire correctly when an airline is down.
+**✅ Definition of Done:** Grafana dashboard shows scraper health, queue depth, and API latency in real time. Circuit breakers fire correctly when an airline is down. *(Met — validated in Step 5 via `scripts/validate_resilience.sh` and `go test -tags e2e -run TestResilience ./cmd/worker`.)*
 
 **Step 1 — Add Prometheus**
-- [ ] Add Prometheus to Docker Compose
-- [ ] Instrument Go API with Prometheus metrics
-- [ ] Track: scraper success rate, parse failures, queue lag, API latency, cache hit rate
+- [x] Add Prometheus to Docker Compose — `prom/prometheus` (`:9090`) + `prom/pushgateway` (`:9091`) services; scrape config in `docker/prometheus/prometheus.yml`. The `api` and `worker` run on the host so Prometheus reaches them via `host.docker.internal`; the `etl` is a batch job, so it pushes to the Pushgateway on completion and Prometheus scrapes that.
+- [x] Instrument Go API with Prometheus metrics — all collectors live in one place, `internal/metrics`. The API serves `/metrics` on `API_PORT` from an outer `ServeMux` ahead of the chi middleware (no CORS / rate limit / request log, and `/metrics` isn't self-counted); a `metricsRecorder` middleware records every other request. The worker runs its own `/metrics` listener on `METRICS_ADDR` (default `:2112`); `cmd/etl` calls `metrics.PushETL(PUSHGATEWAY_URL)` after `etl.Run`.
+- [x] Track: scraper success rate, parse failures, queue lag, API latency, cache hit rate — `http_requests_total` + `http_request_duration_seconds` (by method + chi route pattern), `search_cache_requests_total{result}`, `scrape_attempts_total` / `scrape_failures_total{airline,reason}` / `scrape_duration_seconds` / `scrape_empty_results_total`, `kafka_consumer_lag` (worker gauge, refreshed every 15s from the reader stats), and `etl_parse_failures_total{airline}` (+ `etl_docs_processed_total`, `etl_awards_written_total`). Grafana dashboards over these are Step 2. Step 4 adds `scrape_circuit_state{airline}` and `dlq_messages_total{airline,reason}`.
 
 **Step 2 — Add Grafana**
-- [ ] Add Grafana to Docker Compose
-- [ ] Connect Grafana to Prometheus
-- [ ] Build dashboard: scraper health, queue depth, API performance
+- [x] Add Grafana to Docker Compose — `grafana/grafana:11.4.0` (`:3000`), `depends_on: prometheus`, `grafana-data` volume. Anonymous access is on (`GF_AUTH_ANONYMOUS_ENABLED`, Viewer role) so the dashboard opens with no login; admin is `admin`/`admin` for edits.
+- [x] Connect Grafana to Prometheus — provisioned, not click-ops: `docker/grafana/provisioning/datasources/prometheus.yml` wires the `http://prometheus:9090` datasource (fixed `uid: prometheus`, default, read-only).
+- [x] Build dashboard: scraper health, queue depth, API performance — `docker/grafana/dashboards/cloudmilesscouter.json` (`uid: cloudmilesscouter`), file-provisioned via `docker/grafana/provisioning/dashboards/dashboards.yml`, 15s refresh. Three rows: **API performance** (request rate + p95 latency by route, 5xx ratio, `/api/search` cache hit rate, rate by status), **Scraper health** (per-airline success rate, failures by `reason`, p95 scrape duration, empty-result scrapes), **Queue depth & ETL** (`kafka_consumer_lag`, ETL parse failures / docs processed / awards written from the last run).
 
 **Step 3 — Structured Logging**
-- [ ] Add structured JSON logging across all Go services
-- [ ] Log: scrape start/end, errors, retries, job completions
+- [x] Add structured JSON logging across all Go services — `internal/logging`
+  (`Setup(service, level, format)`) installs a `slog` JSON handler as the process
+  default, tagged with a `service` field (`api` / `worker` / `etl` / `scraper` /
+  `producer`); each `cmd/*/main.go` calls it straight after `config.Load()`.
+  `LOG_LEVEL` (default `info`) and `LOG_FORMAT` (`json` default; `text` for local
+  dev) are config knobs. The internal packages already logged through the `slog`
+  default, so they emit JSON unchanged — the rest was swapping the leftover
+  `log.Fatalf` / `log.Println` startup lines in the mains for `slog`.
+- [x] Log: scrape start/end, errors, retries, job completions — already emitted
+  by the scrapers (`scrape started` / `scrape succeeded` / `scrape failed`, with
+  `airline` + `duration_ms`) and the worker (`job started` / `job done` /
+  `scrape failed` with `reason`, `re-queueing job after backoff`, `job failed
+  permanently, giving up`); the producer logs `job dispatched` per airline. Now
+  they land as JSON with a `service` tag.
 
 **Step 4 — Harden Resilience**
-- [ ] Circuit breaker per airline scraper
-- [ ] Dead letter queue in Kafka for permanently failed jobs
-- [ ] Graceful shutdown handling in all Go services
+- [x] Circuit breaker per airline scraper — `internal/breaker` reworked from a two-state (closed/open) into a three-state machine: after `CIRCUIT_BREAKER_THRESHOLD` (5) consecutive failures for an airline the breaker **opens** and jobs are dropped fast for `CIRCUIT_BREAKER_COOLDOWN` (60s); the first job after the cooldown is let through as a **half-open** probe (further jobs still blocked) — it closes the breaker on success or re-opens it for a fresh cooldown on failure, so a still-down site is never hammered the instant its cooldown lapses. The worker publishes the per-airline state as the `scrape_circuit_state` gauge and logs `circuit opened` / `circuit half-open, probing`.
+- [x] Dead letter queue in Kafka for permanently failed jobs — new `scrape.jobs.dlq` topic (created on boot by `kafka-init` alongside `scrape.jobs`, 1 partition). When a job exhausts its `MAX_SCRAPE_ATTEMPTS` (3) retries the worker writes a `queue.DeadLetterJob` there — the original job plus `reason`, `attempts`, last `error`, and `failed_at` — instead of only logging "giving up", and bumps `dlq_messages_total{airline,reason}`. Poison (undecodable) messages are still just logged and dropped. Inspect the queue with `docker compose -f docker/docker-compose.yml exec kafka kafka-console-consumer --bootstrap-server localhost:9092 --topic scrape.jobs.dlq --from-beginning`.
+- [x] Graceful shutdown handling in all Go services — `cmd/api` (already) drains in-flight requests via `http.Server.Shutdown`. `cmd/worker` (already) stops fetching, lets in-flight scrapes finish and store, then `wg.Wait`s. Added: `cmd/producer` and `cmd/etl` and `cmd/scraper` now install `signal.NotifyContext(SIGINT/SIGTERM)` — the producer stops its dispatch loop, the ETL cancels mid-run (`storage.WriteAwards` is transactional, so it rolls back), and the scraper skips the store if interrupted after the scrape. Post-scrape Mongo writes use a bounded `context.Background()` so a Ctrl-C never throws away a completed 30–45s scrape.
 
 **Step 5 — Test & Validate**
-- [ ] Simulate airline site going down — verify circuit breaker fires
-- [ ] Check Grafana dashboard updates in real time
-- [ ] Verify dead letter queue catches unrecoverable failures
+- [x] Simulate airline site going down — verify circuit breaker fires — the worker's `SCRAPER_FORCE_FAILURE=<airline>` knob (`internal/config`, `cmd/worker`) fails that airline's scrape instantly, no browser, straight into the real retry/breaker/DLQ path. `scripts/validate_resilience.sh` fires repeated scrapes and confirms `scrape_circuit_state{airline}` goes to 1 (open), jobs are then dropped fast (`circuit open for airline, dropping job`), and `--half-open` waits out the cooldown and checks the single probe (`circuit half-open, probing airline`) re-opens it while the site is still down. `go test -tags e2e -run TestResilience ./cmd/worker` asserts the same closed→open→half-open walk deterministically against a live Kafka.
+- [x] Check Grafana dashboard updates in real time — with the worker + API on the host, `up{job="worker"}` / `up{job="api"}` are `1` and the **CloudMilesScouter** dashboard's Scraper-health row tracks the forced failures live (per-airline success rate drops, failures-by-`reason` and `scrape_circuit_state` climb) on its 15s refresh; `validate_resilience.sh` asserts Prometheus has the tripped-breaker series and prints the dashboard URL to eyeball.
+- [x] Verify dead letter queue catches unrecoverable failures — once a forced-failure job exhausts `MAX_SCRAPE_ATTEMPTS` the worker writes a `queue.DeadLetterJob` to `scrape.jobs.dlq` (`reason`, `attempts`, `error`, `failed_at`) and bumps `dlq_messages_total{airline,reason}`; the script consumes the topic and validates the message shape, the e2e test asserts the message lands with the right fields.
 
 ---
 
@@ -364,8 +428,7 @@ compose stack up); each test seeds and cleans up its own rows/keys.
 
 ## Folder Structure
 
-Current tree (through Phase 5 — frontend built and deployed to Vercel).
-`monitoring/` lands in Phase 6.
+Current tree (through Phase 6 Step 5 — validation: one script + one e2e test).
 
 ```
 cloudmilesscouter/
@@ -398,7 +461,8 @@ cloudmilesscouter/
 ├── cmd/
 │   ├── scraper/main.go     # one-off: scrape a single route, store to Mongo
 │   ├── producer/main.go    # dispatch one ScrapeJob per airline to Kafka
-│   ├── worker/main.go      # worker pool: Kafka → scrape → Mongo
+│   ├── worker/main.go      # worker pool: Kafka → scrape → Mongo (SCRAPER_FORCE_FAILURE outage knob, Phase 6 Step 5)
+│   ├── worker/resilience_test.go  # -tags e2e — breaker closed→open→half-open + DLQ against live Kafka (Phase 6 Step 5)
 │   ├── etl/main.go         # Mongo (raw) → Postgres (normalized)
 │   └── api/main.go         # Chi REST API over Postgres (Phase 4)
 ├── internal/
@@ -431,20 +495,27 @@ cloudmilesscouter/
 │   │   ├── routes_query.go     # ListRoutes — read path for /api/routes
 │   │   └── cache.go            # Redis search cache: read-through + ETL invalidation
 │   ├── queue/
-│   │   ├── producer.go
+│   │   ├── producer.go          # scrape.jobs + scrape.jobs.dlq dead-letter writer (Phase 6 Step 4)
 │   │   └── consumer.go
-│   ├── breaker/breaker.go
+│   ├── breaker/breaker.go        # per-airline circuit breaker: closed → open → half-open (Phase 6 Step 4)
+│   ├── metrics/metrics.go     # Phase 6 — all Prometheus collectors + /metrics handler, worker listener, ETL push
+│   ├── logging/logging.go     # Phase 6 Step 3 — slog JSON handler setup, per-service tag
 │   ├── mailotp/imap.go        # IMAP OTP reader (United bootstrap-auto only)
 │   └── config/config.go
 ├── docker/
 │   ├── docker-compose.yml
 │   ├── postgres/init/001_schema.sql
+│   ├── prometheus/prometheus.yml  # Phase 6 Step 1 — scrape config (api, worker, pushgateway)
+│   ├── grafana/                   # Phase 6 Step 2 — provisioned datasource + dashboard
+│   │   ├── provisioning/{datasources,dashboards}/*.yml
+│   │   └── dashboards/cloudmilesscouter.json
 │   └── pgadmin/
 ├── docs/
 │   ├── schema.md
 │   └── api.md                 # REST API reference for the frontend
 ├── scripts/
-│   └── smoke_api.sh           # curl smoke test for the REST API
+│   ├── smoke_api.sh           # curl smoke test for the REST API
+│   └── validate_resilience.sh # Phase 6 Step 5 — breaker / DLQ / Grafana-freshness checks on the live stack
 ├── testdata/samples/         # real scraped payloads, used by the parser tests
 ├── CLAUDE.md
 ├── .env                      # gitignored

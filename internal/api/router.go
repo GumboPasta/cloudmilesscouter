@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -16,6 +17,7 @@ import (
 	"github.com/go-chi/httprate"
 
 	"cloudmilesscouter/internal/config"
+	"cloudmilesscouter/internal/metrics"
 	"cloudmilesscouter/internal/storage"
 )
 
@@ -32,9 +34,14 @@ type server struct {
 
 // NewRouter assembles the router and its middleware chain. The chain, outermost
 // first: RequestID and RealIP populate request context, requestLogger records
-// one structured line per request, Recoverer turns a handler panic into a 500
+// one structured line per request, metricsRecorder feeds the Prometheus request
+// counter and latency histogram, Recoverer turns a handler panic into a 500
 // instead of a dropped connection, CORS answers browser preflights, and the
 // rate limiter caps requests per client IP.
+//
+// GET /metrics is served from an outer ServeMux, ahead of the chi router, so
+// Prometheus scraping it every 15s never touches the request log, the request
+// metrics, CORS, or the rate limiter.
 func NewRouter(cfg config.Config, db *sql.DB, cache *storage.Cache, dispatcher scrapeDispatcher) http.Handler {
 	srv := &server{cfg: cfg, db: db, cache: cache, dispatcher: dispatcher}
 	r := chi.NewRouter()
@@ -42,6 +49,7 @@ func NewRouter(cfg config.Config, db *sql.DB, cache *storage.Cache, dispatcher s
 	r.Use(middleware.RequestID)
 	r.Use(middleware.RealIP)
 	r.Use(requestLogger)
+	r.Use(metricsRecorder)
 	r.Use(middleware.Recoverer)
 
 	r.Use(cors.Handler(cors.Options{
@@ -65,7 +73,10 @@ func NewRouter(cfg config.Config, db *sql.DB, cache *storage.Cache, dispatcher s
 		r.Post("/scrape", srv.handleScrape)
 	})
 
-	return r
+	mux := http.NewServeMux()
+	mux.Handle("/metrics", metrics.Handler())
+	mux.Handle("/", r)
+	return mux
 }
 
 // healthz is a liveness probe: it reports that the process is up and serving.
@@ -103,5 +114,25 @@ func requestLogger(next http.Handler) http.Handler {
 			"request_id", middleware.GetReqID(r.Context()),
 			"remote", r.RemoteAddr,
 		)
+	})
+}
+
+// metricsRecorder feeds the Prometheus request counter and latency histogram.
+// It labels by the chi route pattern ("/api/search", "/api/*" for an unmatched
+// path) rather than the raw URL so an attacker spraying random paths cannot
+// blow up the metric cardinality.
+func metricsRecorder(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		ww := middleware.NewWrapResponseWriter(w, r.ProtoMajor)
+
+		next.ServeHTTP(ww, r)
+
+		route := chi.RouteContext(r.Context()).RoutePattern()
+		if route == "" {
+			route = "unmatched"
+		}
+		metrics.HTTPRequestDuration.WithLabelValues(r.Method, route).Observe(time.Since(start).Seconds())
+		metrics.HTTPRequestsTotal.WithLabelValues(r.Method, route, strconv.Itoa(ww.Status())).Inc()
 	})
 }

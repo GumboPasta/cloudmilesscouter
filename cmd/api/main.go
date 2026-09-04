@@ -9,7 +9,6 @@ package main
 import (
 	"context"
 	"errors"
-	"log"
 	"log/slog"
 	"net/http"
 	"os"
@@ -19,6 +18,7 @@ import (
 
 	"cloudmilesscouter/internal/api"
 	"cloudmilesscouter/internal/config"
+	"cloudmilesscouter/internal/logging"
 	"cloudmilesscouter/internal/queue"
 	"cloudmilesscouter/internal/storage"
 )
@@ -29,12 +29,14 @@ const shutdownTimeout = 10 * time.Second
 
 func main() {
 	cfg := config.Load()
+	logging.Setup("api", cfg.LogLevel, cfg.LogFormat)
 
 	connectCtx, cancelConnect := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancelConnect()
 	db, err := storage.ConnectPostgres(connectCtx, cfg.PostgresURI)
 	if err != nil {
-		log.Fatalf("postgres connection failed: %v", err)
+		slog.Error("postgres connection failed", "err", err)
+		os.Exit(1)
 	}
 	defer db.Close()
 

@@ -2,8 +2,18 @@
 // (an airline ID, here). It exists so the worker pool stops launching browsers
 // against an airline site that is clearly down until a cooldown passes.
 //
-// It is deliberately simple: no half-open trial state, no metrics, process-local
-// only. A per-airline breaker with real state machines is a Phase 6 concern.
+// It is a three-state machine per key — closed, open, half-open:
+//
+//   - closed: work is allowed. Threshold consecutive failures trip it to open.
+//   - open: work is refused. After Cooldown the next Allow returns true once (a
+//     probe) and moves the key to half-open.
+//   - half-open: exactly one probe is in flight; further Allow calls are
+//     refused. A success closes the breaker; a failure re-opens it for a fresh
+//     Cooldown, so a still-down site is not hammered the instant its cooldown
+//     lapses.
+//
+// It is process-local only: each worker process has its own view. That is fine
+// here — the pool is one process — and keeps the type dependency-free.
 package breaker
 
 import (
@@ -11,70 +21,137 @@ import (
 	"time"
 )
 
-// Trips the breaker after this many consecutive failures for a key; stays open
-// for Cooldown after tripping. Threshold is kept above the worker's MaxAttempts
-// (default 3) so one job's full retry run can never trip the breaker on its own
-// — only failures across distinct jobs do.
+// Default trip parameters. DefaultThreshold is kept above the worker's
+// MaxAttempts (default 3) so one job's full retry run can never trip the
+// breaker on its own — only failures across distinct jobs do. cmd/worker
+// overrides both from config; New falls back to these when passed zero.
 const (
-	Threshold = 5
-	Cooldown  = 60 * time.Second
+	DefaultThreshold = 5
+	DefaultCooldown  = 60 * time.Second
 )
 
-type state struct {
-	consecutiveFailures int
-	openUntil           time.Time
+// State is a breaker's current state for one key.
+type State int
+
+const (
+	Closed State = iota
+	Open
+	HalfOpen
+)
+
+func (s State) String() string {
+	switch s {
+	case Open:
+		return "open"
+	case HalfOpen:
+		return "half-open"
+	default:
+		return "closed"
+	}
 }
 
-// Breaker tracks failure state per key. The zero value is not usable; call New.
+type entry struct {
+	state               State
+	consecutiveFailures int
+	openUntil           time.Time // when an open breaker becomes probe-eligible
+}
+
+// Breaker tracks state per key. The zero value is not usable; call New.
 type Breaker struct {
-	now func() time.Time // overridable in tests
+	now       func() time.Time // overridable in tests
+	threshold int
+	cooldown  time.Duration
 
 	mu   sync.Mutex
-	keys map[string]*state
+	keys map[string]*entry
 }
 
-// New returns a ready Breaker.
-func New() *Breaker {
-	return &Breaker{now: time.Now, keys: make(map[string]*state)}
-}
-
-func (b *Breaker) get(key string) *state {
-	s := b.keys[key]
-	if s == nil {
-		s = &state{}
-		b.keys[key] = s
+// New returns a ready Breaker. A zero threshold or cooldown falls back to the
+// package defaults.
+func New(threshold int, cooldown time.Duration) *Breaker {
+	if threshold <= 0 {
+		threshold = DefaultThreshold
 	}
-	return s
+	if cooldown <= 0 {
+		cooldown = DefaultCooldown
+	}
+	return &Breaker{
+		now:       time.Now,
+		threshold: threshold,
+		cooldown:  cooldown,
+		keys:      make(map[string]*entry),
+	}
 }
 
-// Allow reports whether work for key may proceed. It returns false while the
-// breaker for key is open.
+// Cooldown reports the configured open-state cooldown, for callers that log it.
+func (b *Breaker) Cooldown() time.Duration { return b.cooldown }
+
+func (b *Breaker) get(key string) *entry {
+	e := b.keys[key]
+	if e == nil {
+		e = &entry{}
+		b.keys[key] = e
+	}
+	return e
+}
+
+// Allow reports whether work for key may proceed. A closed breaker always
+// allows. An open breaker whose cooldown has elapsed allows exactly one probe
+// and transitions to half-open; every other open or half-open call is refused.
 func (b *Breaker) Allow(key string) bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	return !b.now().Before(b.get(key).openUntil)
+	e := b.get(key)
+	switch e.state {
+	case Open:
+		if b.now().Before(e.openUntil) {
+			return false
+		}
+		e.state = HalfOpen // grant this caller the probe
+		return true
+	case HalfOpen:
+		return false
+	default: // Closed
+		return true
+	}
 }
 
-// RecordSuccess clears any failure state for key.
+// State returns the current state for key.
+func (b *Breaker) State(key string) State {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.get(key).state
+}
+
+// RecordSuccess clears any failure state for key and closes the breaker.
 func (b *Breaker) RecordSuccess(key string) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	s := b.get(key)
-	s.consecutiveFailures = 0
-	s.openUntil = time.Time{}
+	e := b.get(key)
+	e.state = Closed
+	e.consecutiveFailures = 0
+	e.openUntil = time.Time{}
 }
 
-// RecordFailure counts a failure for key and, once Threshold consecutive
-// failures are reached, opens the breaker for Cooldown. It returns true if this
-// call tripped the breaker.
-func (b *Breaker) RecordFailure(key string) (tripped bool) {
+// RecordFailure counts a failure for key. A failed probe in half-open re-opens
+// the breaker for another cooldown; in closed, the threshold-th consecutive
+// failure opens it. It returns true if this call moved the breaker to open.
+func (b *Breaker) RecordFailure(key string) (opened bool) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	s := b.get(key)
-	s.consecutiveFailures++
-	if s.consecutiveFailures >= Threshold {
-		s.consecutiveFailures = 0
-		s.openUntil = b.now().Add(Cooldown)
+	e := b.get(key)
+
+	if e.state == HalfOpen {
+		e.state = Open
+		e.openUntil = b.now().Add(b.cooldown)
+		return true
+	}
+
+	e.consecutiveFailures++
+	if e.consecutiveFailures >= b.threshold {
+		e.state = Open
+		e.consecutiveFailures = 0
+		e.openUntil = b.now().Add(b.cooldown)
 		return true
 	}
 	return false

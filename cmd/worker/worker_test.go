@@ -59,21 +59,89 @@ type errString string
 
 func (e errString) Error() string { return string(e) }
 
-// TestRetryGivesUpAtMaxAttempts checks the boundary: a job whose next attempt
-// would reach cfg.MaxAttempts is dropped without touching the producer (a nil
-// producer here would panic if it were used).
-func TestRetryGivesUpAtMaxAttempts(t *testing.T) {
+func TestForceFailure(t *testing.T) {
+	cases := []struct {
+		name    string
+		list    []string
+		airline string
+		want    bool
+	}{
+		{"empty config", nil, "delta", false},
+		{"named", []string{"delta"}, "delta", true},
+		{"one of several", []string{"united", "delta"}, "delta", true},
+		{"not named", []string{"united"}, "delta", false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			cfg := config.Config{ScraperForceFailure: c.list}
+			if got := forceFailure(cfg, c.airline); got != c.want {
+				t.Errorf("forceFailure(%v, %q) = %v, want %v", c.list, c.airline, got, c.want)
+			}
+		})
+	}
+}
+
+// fakeRequeuer records the retry path's calls so tests can assert which branch
+// ran without a live Kafka.
+type fakeRequeuer struct {
+	enqueued    []queue.ScrapeJob
+	deadLetters []queue.DeadLetterJob
+}
+
+func (f *fakeRequeuer) Enqueue(_ context.Context, job queue.ScrapeJob) error {
+	f.enqueued = append(f.enqueued, job)
+	return nil
+}
+
+func (f *fakeRequeuer) DeadLetter(_ context.Context, dl queue.DeadLetterJob) error {
+	f.deadLetters = append(f.deadLetters, dl)
+	return nil
+}
+
+// TestRetryDeadLettersAtMaxAttempts checks the boundary: a job whose next
+// attempt would reach cfg.MaxAttempts is dead-lettered (not re-enqueued) without
+// sleeping on a backoff.
+func TestRetryDeadLettersAtMaxAttempts(t *testing.T) {
 	cfg := config.Config{MaxAttempts: 3, RetryBackoffBase: time.Second}
 	job := queue.ScrapeJob{Airline: "united", Attempt: 2} // next would be 3 == MaxAttempts
+	fake := &fakeRequeuer{}
 
 	done := make(chan struct{})
 	go func() {
-		retry(context.Background(), cfg, nil, slog.Default(), job, "timeout")
+		retry(context.Background(), cfg, fake, slog.Default(), job, "timeout", "navigation timed out")
 		close(done)
 	}()
 	select {
 	case <-done:
 	case <-time.After(time.Second):
-		t.Fatal("retry did not return promptly on the give-up boundary (it must not sleep or enqueue)")
+		t.Fatal("retry did not return promptly on the give-up boundary (it must not sleep before dead-lettering)")
+	}
+
+	if len(fake.enqueued) != 0 {
+		t.Fatalf("re-enqueued %d jobs at the give-up boundary, want 0", len(fake.enqueued))
+	}
+	if len(fake.deadLetters) != 1 {
+		t.Fatalf("dead-lettered %d jobs, want 1", len(fake.deadLetters))
+	}
+	dl := fake.deadLetters[0]
+	if dl.Job != job || dl.Reason != "timeout" || dl.Attempts != 3 || dl.Error != "navigation timed out" {
+		t.Fatalf("dead-letter = %+v, want job %+v reason=timeout attempts=3 error=%q", dl, job, "navigation timed out")
+	}
+}
+
+// TestRetryReEnqueuesBelowMaxAttempts checks the other branch: a job with tries
+// left is re-enqueued with an incremented attempt and not dead-lettered.
+func TestRetryReEnqueuesBelowMaxAttempts(t *testing.T) {
+	cfg := config.Config{MaxAttempts: 3, RetryBackoffBase: time.Millisecond}
+	job := queue.ScrapeJob{Airline: "delta", Attempt: 0}
+	fake := &fakeRequeuer{}
+
+	retry(context.Background(), cfg, fake, slog.Default(), job, "timeout", "boom")
+
+	if len(fake.deadLetters) != 0 {
+		t.Fatalf("dead-lettered %d jobs with tries left, want 0", len(fake.deadLetters))
+	}
+	if len(fake.enqueued) != 1 || fake.enqueued[0].Attempt != 1 {
+		t.Fatalf("enqueued = %+v, want one job with Attempt=1", fake.enqueued)
 	}
 }

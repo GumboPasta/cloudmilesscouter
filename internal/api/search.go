@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"cloudmilesscouter/internal/metrics"
 	"cloudmilesscouter/internal/storage"
 )
 
@@ -70,9 +71,13 @@ func (s *server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		slog.Warn("search cache read failed", "err", err,
 			"origin", origin, "destination", destination, "date", rawDate, "cabin", cabin)
 	} else if hit {
+		metrics.SearchCacheRequests.WithLabelValues("hit").Inc()
 		writeJSON(w, http.StatusOK, results)
 		return
 	}
+	// A read error is counted as a miss: the request falls through to Postgres
+	// exactly as an ordinary miss does.
+	metrics.SearchCacheRequests.WithLabelValues("miss").Inc()
 
 	results, err := storage.SearchAwards(r.Context(), s.db, search)
 	if err != nil {

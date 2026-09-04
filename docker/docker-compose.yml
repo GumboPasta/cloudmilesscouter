@@ -88,7 +88,50 @@ services:
       timeout: 10s
       retries: 10
 
-  # One-shot: creates the scrape.jobs topic once the broker is healthy, then exits.
+  # Phase 6 — Observability. Prometheus scrapes the API and worker, which run on
+  # the host (not in compose), via host.docker.internal; the ETL is a batch job
+  # so it pushes to the Pushgateway instead and Prometheus scrapes that. Grafana
+  # reads from Prometheus and provisions its datasource + dashboard from
+  # ./grafana (Step 2).
+  prometheus:
+    image: prom/prometheus:v3.1.0
+    restart: unless-stopped
+    depends_on:
+      - pushgateway
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  pushgateway:
+    image: prom/pushgateway:v1.11.0
+    restart: unless-stopped
+    ports:
+      - "9091:9091"
+
+  grafana:
+    image: grafana/grafana:11.4.0
+    restart: unless-stopped
+    depends_on:
+      - prometheus
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      # Open the dashboard with no login — local, non-commercial, MVP.
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+
+  # One-shot: creates the scrape.jobs topic and its dead-letter topic
+  # scrape.jobs.dlq (Phase 6 Step 4) once the broker is healthy, then exits.
   kafka-init:
     image: confluentinc/cp-kafka:7.7.1
     restart: "no"
@@ -96,11 +139,14 @@ services:
       kafka:
         condition: service_healthy
     command: >
+      bash -c "
       kafka-topics --bootstrap-server kafka:29092
-      --create --if-not-exists
-      --topic scrape.jobs
-      --partitions 3
-      --replication-factor 1
+      --create --if-not-exists --topic scrape.jobs
+      --partitions 3 --replication-factor 1 &&
+      kafka-topics --bootstrap-server kafka:29092
+      --create --if-not-exists --topic scrape.jobs.dlq
+      --partitions 1 --replication-factor 1
+      "
 
 volumes:
   mongo-data:
@@ -110,3 +156,5 @@ volumes:
   zookeeper-data:
   zookeeper-log:
   kafka-data:
+  prometheus-data:
+  grafana-data:

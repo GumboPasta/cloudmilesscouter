@@ -62,6 +62,14 @@ func Decode(msg kafka.Message) (ScrapeJob, error) {
 	return job, err
 }
 
+// Lag reports how many messages on the topic have been produced but not yet
+// fetched by this consumer group. kafka-go computes it from the last fetch, so
+// it is zero until the first Fetch and is a snapshot, not live. The worker
+// publishes it as the kafka_consumer_lag gauge.
+func (c *Consumer) Lag() int64 {
+	return c.r.Stats().Lag
+}
+
 // Close stops the reader.
 func (c *Consumer) Close() error {
 	return c.r.Close()

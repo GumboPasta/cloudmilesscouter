@@ -9,6 +9,7 @@ import (
 	"go.mongodb.org/mongo-driver/v2/mongo"
 
 	"cloudmilesscouter/internal/etl/parsers"
+	"cloudmilesscouter/internal/metrics"
 	"cloudmilesscouter/internal/storage"
 )
 
@@ -79,6 +80,7 @@ func Run(ctx context.Context, client *mongo.Client, db *sql.DB, cache *storage.C
 
 		parsed, err := parser.Parse(doc)
 		if err != nil {
+			metrics.ETLParseFailuresTotal.WithLabelValues(doc.Airline).Inc()
 			slog.Warn("failed to parse raw scrape, skipping", "airline", doc.Airline, "err", err)
 			skipped++
 			continue
@@ -105,6 +107,9 @@ func Run(ctx context.Context, client *mongo.Client, db *sql.DB, cache *storage.C
 				"search_date", k.SearchDate.Format("2006-01-02"))
 		}
 	}
+
+	metrics.ETLDocsProcessedTotal.Add(float64(len(newest)))
+	metrics.ETLAwardsWrittenTotal.Add(float64(len(awards)))
 
 	slog.Info("etl run complete", "docs", len(docs), "docs_deduped", len(newest), "keys_parsed", len(clearKeys), "awards_written", len(awards), "docs_skipped", skipped)
 	return nil
